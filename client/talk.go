@@ -28,15 +28,18 @@ func (self *TalkBuffer) Add(src *TalkSource, line []rune) {
 
 type TalkClient struct {
 	Sources []*TalkSource
-	Chat *TalkBuffer
-	Log *TalkBuffer
+	Buffers []*TalkBuffer
+	Width int
+	Lines []int
 }
 
-func NewTalkClient() (c *TalkClient) {
+func NewTalkClient(buffercount int) (c *TalkClient) {
 	c = &TalkClient {
-		Chat: &TalkBuffer{},
-		Log: &TalkBuffer{},
+		Buffers: make([]*TalkBuffer, buffercount),
+		Lines: make([]int, buffercount),
+	}
+	for i := 0; i < buffercount; i++ {
+		c.Buffers[i] = &TalkBuffer{}
 	}
 	return
 }
-
