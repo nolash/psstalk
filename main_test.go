@@ -115,6 +115,7 @@ func TestInputAndRandomOutput(t *testing.T) {
 	//var err error
 	meC := make(chan []rune)
 	otherC := make(chan []rune)
+	promptC := make(chan bool)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
 	
@@ -142,10 +143,13 @@ func TestInputAndRandomOutput(t *testing.T) {
 		for run {
 			select {
 				case <- meC:
-					updateView(client.Buffers[0], 0, client.Lines[0])
+					updateView(client.Buffers[0], 0, client.Lines[0] - 1)
 					termbox.Flush()
 				case <- otherC:
 					updateView(client.Buffers[1], client.Lines[0] + 1, client.Lines[1])
+					termbox.Flush()
+				case <- promptC:
+					termbox.SetCursor(prompt.Count % client.Width, prompt.Line + (prompt.Count / client.Width))
 					termbox.Flush()
 				case <- quitC:
 					run = false
@@ -161,33 +165,40 @@ func TestInputAndRandomOutput(t *testing.T) {
 		if ev.Type == termbox.EventKey {
 			if ev.Ch == 0 {
 				switch (ev.Key) {
+					// esc quits the application
 					case termbox.KeyEsc:
 						quitC <- struct{}{}
 						run = false
+					// pop from prompt buffer
+					// if the line count changes also update the message buffer, less the lines that the prompt buffer occupies
 					case termbox.KeyBackspace:
-						prompt.Remove()
-						now := prompt.Count / client.Width
-						if now < before {
-							updateView(client.Buffers[0], 0, client.Lines[0] - (now + 1))
-						}
-						updatePromptView()
+						removeFromPrompt(before)
+						promptC <- true
+					case termbox.KeyBackspace2:
+						removeFromPrompt(before)
+						promptC <- true
 					case termbox.KeyEnter:
 						line := prompt.Buffer
 						client.Buffers[0].Add(nil, line)
-						prompt.Reset()
 						prompt.Line += (prompt.Count / client.Width) + 1
-						if prompt.Line > client.Lines[0] {
-							prompt.Line = client.Lines[0]
+						if prompt.Line > client.Lines[0] - 1 {
+							prompt.Line = client.Lines[0] - 1
 						}
 						meC <- line
+						prompt.Reset()
+						for i := 0; i < client.Width; i++ {
+							termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
+						}
+						promptC <- true
 					case termbox.KeySpace:
 						addToPrompt(runeSpace, before)
+						promptC <- true
 				} 
 			} else {
 				addToPrompt(ev.Ch, before)
+				promptC <- true
+				
 			}
-			termbox.SetCursor(prompt.Count % client.Width, prompt.Line + (prompt.Count / client.Width))
-			termbox.Flush()
 		}
 	} 
 	
@@ -225,30 +236,58 @@ func randomLine(prefix []rune) (rline []rune) {
 
 func addToPrompt(r rune, before int) {
 	prompt.Add(r)
+	// if the line count changes also update the message buffer, less the lines that the prompt buffer occupies
 	promptlines := prompt.Count / client.Width
 	if prompt.Count / client.Width > before {
-		updateView(client.Buffers[0], 0, client.Lines[0] - (promptlines + 1))
+		viewlines := 0
+		for _, entry := range client.Buffers[0].Buffer {
+			viewlines += lineRows(entry.Content)
+			if viewlines >= client.Lines[0] {
+				prompt.Line--
+				for i := 0; i < client.Width; i++ {
+					termbox.SetCell(i, prompt.Line + (prompt.Count / client.Width), runeSpace, bgAttr, bgAttr)
+				}
+				break
+			}
+		}
+		updateView(client.Buffers[0], 0, client.Lines[0] - (promptlines + 1) - 1)
 	}
 	updatePromptView()
 }
 
+func removeFromPrompt(before int) {
+	if prompt.Count == 0 {
+		return
+	}
+	prompt.Remove()
+	now := prompt.Count / client.Width
+	if now < before {
+		viewlines := 0
+		for _, entry := range client.Buffers[0].Buffer {
+			viewlines += lineRows(entry.Content)
+			if viewlines > client.Lines[0] {
+				prompt.Line++
+				break
+			}
+		}
+		updateView(client.Buffers[0], 0, client.Lines[0] - (now + 1)) 
+	}
+	updatePromptView()	
+}
 
 func updatePromptView() {
 	var i int
-	lines := prompt.Line + (prompt.Count / client.Width)
-	
-	if lines > client.Lines[0] + lines {
-		lines = client.Lines[0] - lines 
-	} 
-	
+	//lines := prompt.Line + (prompt.Count / client.Width)
+
+	// write buffer to terminal at prompt position
 	for i = 0; i < prompt.Count; i++ {
-		termbox.SetCell(i % client.Width, lines + (i / client.Width), prompt.Buffer[i], unsentColor, bgAttr)
+		termbox.SetCell(i % client.Width, prompt.Line + (i / client.Width), prompt.Buffer[i], unsentColor, bgAttr)
 	}
-	lines += i / client.Width
-	i = i % client.Width
-	if i > 0 {
+	
+	// clear remaining lines
+	if  i % client.Width > 0 {
 		for ; i < client.Width; i++ {
-			termbox.SetCell(i, lines, runeSpace, bgAttr, bgAttr)
+			termbox.SetCell(i % client.Width, prompt.Line + (i / client.Width), runeSpace, bgAttr, bgAttr)
 		}
 	}
 }
