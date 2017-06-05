@@ -57,7 +57,7 @@ var (
 	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
 	srcFormat map[*term.TalkSource]termbox.Attribute
 	bgAttr = termbox.ColorBlack
-	bgClearAttr = termbox.ColorBlue
+	bgClearAttr = termbox.ColorBlack
 	runeDash rune = 45
 	runeSpace rune = 32
 )
@@ -89,9 +89,10 @@ func updateView(buf *term.TalkBuffer, startline int, viewportheight int) {
 
 	for i := bufline; i < len(buf.Buffer); i++ {
 		var ii int
+		var r rune
+
 		content := buf.Buffer[i].Runes("")
-		//for ii, r = range buf.Buffer[i].Content {
-		for ii, r := range content {
+		for ii, r = range content {
 			if ii < skip {
 				continue
 			}

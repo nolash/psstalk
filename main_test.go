@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -18,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/swarm/pss"
 	"github.com/ethereum/go-ethereum/swarm/network"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/pot"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
@@ -38,7 +40,6 @@ var (
 // initialize the client buffer handler
 // draw the mid screen separator
 func init() {
-	var err error
 
 	hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
 	hf := log.LvlFilterHandler(log.LvlTrace, hs)
@@ -47,23 +48,6 @@ func init() {
 
 	chatlog = log.New("chatlog", "main")
 	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
-
-	client = term.NewTalkClient(2)
-
-	err = termbox.Init()
-	if err != nil {
-		panic("could not init termbox")
-	}
-	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
-	if err != nil {
-		fmt.Printf("cant clear %v", err)
-		os.Exit(1)
-	}
-	updateSize()
-	for i := 0; i < client.Width; i++ {
-		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
-	}
-	termbox.Flush()
 
 }
 
@@ -74,6 +58,8 @@ func TestRandomOutput(t *testing.T) {
 	chatC := make(chan []rune)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
+
+	initClient()
 
 	rand.Seed(time.Now().Unix())
 
@@ -139,6 +125,8 @@ func TestInputAndRandomOutput(t *testing.T) {
 	promptC := make(chan bool)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
+
+	initClient()
 
 	prompt.Reset()
 
@@ -226,12 +214,12 @@ func TestInputAndRandomOutput(t *testing.T) {
 	termbox.Close()
 }
 
-func TestPssInput(t *testing.T) {
-//	meC := make(chan []rune)
+func TestPssReceive(t *testing.T) {
+	var err error
 	otherC := make(chan []rune)
-//	promptC := make(chan bool)
 	quitTickC := make(chan struct{})
-	pssC := make(chan interface{})
+	pssInC := make(chan interface{})
+	pssOutC := make(chan interface{})
 	quitC := make(chan struct{})
 	quitPssC := make(chan struct{})
 	msgs := [][]byte{
@@ -240,6 +228,9 @@ func TestPssInput(t *testing.T) {
 		[]byte("is"),
 		[]byte("pss!"),
 	}
+
+	initClient()
+
 	addSrc("bob", termbox.ColorYellow)
 
 	prompt.Reset()
@@ -248,9 +239,15 @@ func TestPssInput(t *testing.T) {
 
 	otherticker := time.NewTicker(time.Millisecond * 500)
 
+	proto  := newProtocol(pssInC, pssOutC)
+
 	ctx, cancel := context.WithCancel(context.Background())
-	psc, ps := newPss(t, ctx, cancel, pssC, quitPssC)
-	psc.Start()
+	_, ps := newPss(t, ctx, cancel, proto, quitPssC)
+
+	err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
+	if err != nil {
+		t.Fatalf("pss create fail: %v", err)
+	}
 
 	// set up the message to send
 	code, ok := chatProtocol.GetCode(&chatMsg{})
@@ -279,7 +276,7 @@ func TestPssInput(t *testing.T) {
 						Payload: env,
 					})
 					serial++
-				case msg := <-pssC:
+				case msg := <-pssInC:
 					chatmsg, ok := msg.(*chatMsg)
 					if !ok {
 						chatlog.Crit("Could not parse chatmsg", "msg", msg)
@@ -316,6 +313,157 @@ func TestPssInput(t *testing.T) {
 	quitTickC <- struct{}{}
 	termbox.Close()
 }
+
+func TestPssSendAndReceive(t *testing.T) {
+	var potaddr pot.Address
+	var serial int = 1
+	meC := make(chan []rune)
+	otherC := make(chan []rune)
+	promptC := make(chan bool)
+	pssInC := make(chan interface{})
+	pssOutC := make(chan interface{})
+	quitC := make(chan struct{})
+	quitPssC := make(chan struct{})
+
+	initClient()
+
+	addSrc(fmt.Sprintf("%x", fakeselfaddr[:4]), termbox.ColorYellow)
+
+	prompt.Reset()
+
+	rand.Seed(time.Now().Unix())
+
+	proto := newProtocol(pssInC, pssOutC)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	psc, _ := newPss(t, ctx, cancel, proto, quitPssC)
+
+	copy(potaddr[:], fakeselfaddr)
+
+	psc.AddPssPeer(potaddr, chatProtocol)
+
+	go func() {
+		for run {
+			select {
+				case msg := <-pssInC:
+					var rs []rune
+					var buf *bytes.Buffer
+					chatmsg, ok := msg.(*chatMsg)
+					if !ok {
+						chatlog.Crit("Could not parse chatmsg", "msg", msg)
+						quitC<-struct{}{}
+					}
+					buf = bytes.NewBufferString(fmt.Sprintf("%d=", chatmsg.Serial))
+					for {
+						r, n, err := buf.ReadRune()
+						if err != nil || n == 0 {
+							break
+						}
+						rs = append(rs, r)
+					}
+
+					buf = bytes.NewBuffer(chatmsg.Content)
+					for {
+						r, n, err := buf.ReadRune()
+						if err != nil || n == 0 {
+							break
+						}
+						rs = append(rs, r)
+					}
+					client.Buffers[1].Add(randomSrc(), rs)
+					otherC <- rs
+			}
+		}
+	}()
+
+	go func() {
+		for run {
+			select {
+				case <- meC:
+					updateView(client.Buffers[0], 0, client.Lines[0] - 1)
+					termbox.Flush()
+				case <- promptC:
+					termbox.SetCursor(prompt.Count % client.Width, prompt.Line + (prompt.Count / client.Width))
+					termbox.Flush()
+				case <- otherC:
+					updateView(client.Buffers[1], client.Lines[0] + 1, client.Lines[1])
+					termbox.Flush()
+				case <- quitC:
+					run = false
+			}
+		}
+	}()
+
+	termbox.SetCursor(0, 0)
+
+	for run {
+		before := prompt.Count / client.Width
+		ev := termbox.PollEvent()
+		if ev.Type == termbox.EventKey {
+			if ev.Ch == 0 {
+				switch (ev.Key) {
+					// esc quits the application
+					case termbox.KeyEsc:
+						quitC <- struct{}{}
+						run = false
+					// pop from prompt buffer
+					// if the line count changes also update the message buffer, less the lines that the prompt buffer occupies
+					case termbox.KeyBackspace:
+						removeFromPrompt(before)
+						promptC <- true
+					case termbox.KeyBackspace2:
+						removeFromPrompt(before)
+						promptC <- true
+					case termbox.KeyEnter:
+						var b []byte
+						buf := bytes.NewBuffer(b)
+
+						line := prompt.Buffer
+						client.Buffers[0].Add(nil, line)
+						prompt.Line += (prompt.Count / client.Width) + 1
+						if prompt.Line > client.Lines[0] - 1 {
+							prompt.Line = client.Lines[0] - 1
+						}
+						meC <- line
+						prompt.Reset()
+						for i := 0; i < client.Width; i++ {
+							termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
+						}
+						promptC <- true
+
+						// serialize the runes in the line to bytes
+						for _, r := range line {
+							n, err := buf.WriteRune(r)
+							if err != nil || n == 0 {
+								break
+							}
+						}
+
+						// send the message to ourselves using pssclient
+						payload := chatMsg{
+							Serial: uint64(serial),
+							Content: buf.Bytes(),
+							Source: client.Sources[0].Nick,
+						}
+
+						pssOutC <- payload
+						serial++
+
+					case termbox.KeySpace:
+						addToPrompt(runeSpace, before)
+						promptC <- true
+				}
+			} else {
+				addToPrompt(ev.Ch, before)
+				promptC <- true
+
+			}
+		}
+	}
+
+	termbox.Close()
+}
+
 
 // split the screen vertically in two
 func updateSize() {
@@ -406,20 +554,18 @@ func updatePromptView() {
 	}
 }
 
-func newPss(t *testing.T, ctx context.Context, cancel func(), pssC chan interface{}, quitC chan struct{}) (*pssclient.PssClient, *pss.Pss) {
+func newPss(t *testing.T, ctx context.Context, cancel func(), proto *p2p.Protocol, quitC chan struct{}) (*pssclient.PssClient, *pss.Pss) {
 	var err error
+
 	conf := pssclient.NewPssClientConfig()
 
 	psc := pssclient.NewPssClient(ctx, cancel, conf)
 
 	ps := pss.NewTestPss(fakeselfaddr)
-	err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, newProtocol(pssC))
-	if err != nil {
-		t.Fatalf("pss create fail: %v", err)
-	}
 
 	srv := rpc.NewServer()
 	srv.RegisterName("pss", pss.NewPssAPI(ps))
+	srv.RegisterName("psstest", pss.NewPssAPITest(ps))
 	ws := srv.WebsocketHandler([]string{"*"})
 	uri := fmt.Sprintf("%s:%d", "localhost", 8546)
 
@@ -432,16 +578,21 @@ func newPss(t *testing.T, ctx context.Context, cancel func(), pssC chan interfac
 		http.Serve(sock, ws)
 	}()
 
+
 	go func() {
 		<-quitC
 		sock.Close()
 	}()
+
+	psc.Start()
+	psc.RunProtocol(proto)
+
 	return psc, ps
 }
 
-func newProtocol(pssC chan interface{}) *p2p.Protocol {
+func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
 	chatctrl := chatCtrl{
-		inC: pssC,
+		inC: inC,
 	}
 	return &p2p.Protocol {
 		Name: chatProtocol.Name,
@@ -449,9 +600,42 @@ func newProtocol(pssC chan interface{}) *p2p.Protocol {
 		Length: 3,
 		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 			pp := protocols.NewPeer(p, rw, chatProtocol)
+			go func() {
+				for {
+					select {
+						case msg := <-outC:
+							err := pp.Send(msg)
+							if err != nil {
+								pp.Drop(err)
+								break
+							}
+					}
+				}
+			}()
+
 			pp.Run(chatctrl.chatHandler)
 			return nil
 		},
 	}
 }
 
+func initClient() {
+
+	*client = *term.NewTalkClient(2)
+
+	err := termbox.Init()
+	if err != nil {
+		panic("could not init termbox")
+	}
+	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
+	if err != nil {
+		fmt.Printf("cant clear %v", err)
+		os.Exit(1)
+	}
+	updateSize()
+	for i := 0; i < client.Width; i++ {
+		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
+	}
+	termbox.Flush()
+
+}

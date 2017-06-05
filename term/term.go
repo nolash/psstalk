@@ -1,5 +1,9 @@
 package term
 
+import (
+	"bytes"
+)
+
 const (
 	bufferLines = 1024
 )
@@ -13,20 +17,31 @@ type TalkEntry struct {
 	Content []rune
 }
 
-func (self *TalkEntry) Runes(sep string) (r []rune) {
-	if sep == "" {
-		sep = ": "
+func (self *TalkEntry) Runes(sep string) (rb []rune) {
+
+	source := ""
+	if self.Source != nil {
+	//if false {
+		source = self.Source.Nick
+		if sep == "" {
+			sep = ": "
+		}
+		source += sep
+
+		buf := bytes.NewBufferString(source)
+		for {
+			r, s, err := buf.ReadRune()
+			if err != nil || s == 0 {
+				break
+			}
+			rb = append(rb, r)
+		}
 	}
-	for _, b := range self.Source.Nick {
-		r = append(r, int32(b))
+
+	for _, r := range self.Content {
+		rb = append(rb, r)
 	}
-	for _, b := range sep {
-		r = append(r, int32(b))
-	}
-	for _, b := range self.Content {
-		r = append(r, b)
-	}
-	return r
+	return rb
 }
 
 type TalkBuffer struct {
