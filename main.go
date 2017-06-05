@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"os"
+//	"fmt"
+//	"os"
 	termbox "github.com/nsf/termbox-go"
-	"github.com/nolash/psstalk/term"
+//	"github.com/nolash/psstalk/term"
 )
 
 var (
@@ -15,26 +15,26 @@ var (
 
 // initialize the client buffer handler
 // draw the mid screen separator
-func init() {
-	var err error
-	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
-	client = term.NewTalkClient(2)
-	err = termbox.Init()
-	if err != nil {
-		panic("could not init termbox")
-	}
-	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
-	if err != nil {
-		fmt.Printf("cant clear %v", err)
-		os.Exit(1)
-	}
-	updateSize()
-	for i := 0; i < client.Width; i++ {
-		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
-	}
-	termbox.Flush()
-}
-
+//func init() {
+//	var err error
+//	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
+//	client = term.NewTalkClient(2)
+//	err = termbox.Init()
+//	if err != nil {
+//		panic("could not init termbox")
+//	}
+//	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
+//	if err != nil {
+//		fmt.Printf("cant clear %v", err)
+//		os.Exit(1)
+//	}
+//	updateSize()
+//	for i := 0; i < client.Width; i++ {
+//		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
+//	}
+//	termbox.Flush()
+//}
+//
 func main() {
 	//var err error
 	quitC := make(chan struct{})
@@ -51,7 +51,7 @@ func main() {
 		}
 	}
 
-	termbox.Close()
+//	termbox.Close()
 }
 
 

@@ -41,6 +41,24 @@ var (
 // draw the mid screen separator
 func init() {
 
+	client = term.NewTalkClient(2)
+
+	err := termbox.Init()
+	if err != nil {
+		panic("could not init termbox")
+	}
+	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
+	if err != nil {
+		fmt.Printf("cant clear %v", err)
+		os.Exit(1)
+	}
+	updateSize()
+	for i := 0; i < client.Width; i++ {
+		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
+	}
+	termbox.Flush()
+
+
 	hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
 	hf := log.LvlFilterHandler(log.LvlTrace, hs)
 	h := log.CallerFileHandler(hf)
@@ -59,7 +77,7 @@ func TestRandomOutput(t *testing.T) {
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
 
-	initClient()
+	
 
 	rand.Seed(time.Now().Unix())
 
@@ -126,7 +144,7 @@ func TestInputAndRandomOutput(t *testing.T) {
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
 
-	initClient()
+	
 
 	prompt.Reset()
 
@@ -229,7 +247,7 @@ func TestPssReceive(t *testing.T) {
 		[]byte("pss!"),
 	}
 
-	initClient()
+	
 
 	addSrc("bob", termbox.ColorYellow)
 
@@ -325,7 +343,7 @@ func TestPssSendAndReceive(t *testing.T) {
 	quitC := make(chan struct{})
 	quitPssC := make(chan struct{})
 
-	initClient()
+	
 
 	addSrc(fmt.Sprintf("%x", fakeselfaddr[:4]), termbox.ColorYellow)
 
@@ -460,7 +478,6 @@ func TestPssSendAndReceive(t *testing.T) {
 			}
 		}
 	}
-
 	termbox.Close()
 }
 
@@ -619,23 +636,3 @@ func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
 	}
 }
 
-func initClient() {
-
-	*client = *term.NewTalkClient(2)
-
-	err := termbox.Init()
-	if err != nil {
-		panic("could not init termbox")
-	}
-	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
-	if err != nil {
-		fmt.Printf("cant clear %v", err)
-		os.Exit(1)
-	}
-	updateSize()
-	for i := 0; i < client.Width; i++ {
-		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
-	}
-	termbox.Flush()
-
-}
