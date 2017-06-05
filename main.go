@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	termbox "github.com/nsf/termbox-go"
-	talk "github.com/nolash/psstalk/client"
+	"github.com/nolash/psstalk/term"
 )
 
 var (
@@ -17,8 +17,8 @@ var (
 // draw the mid screen separator
 func init() {
 	var err error
-	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
-	client = talk.NewTalkClient(2)
+	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
+	client = term.NewTalkClient(2)
 	err = termbox.Init()
 	if err != nil {
 		panic("could not init termbox")
@@ -38,7 +38,7 @@ func init() {
 func main() {
 	//var err error
 	quitC := make(chan struct{})
-	
+
 	for run {
 		ev := termbox.PollEvent()
 		if ev.Type == termbox.EventKey {
@@ -49,8 +49,8 @@ func main() {
 				freeze = true
 			}
 		}
-	} 
-	
+	}
+
 	termbox.Close()
 }
 

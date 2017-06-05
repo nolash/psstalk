@@ -1,34 +1,55 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
+	"net"
+	"net/http"
 	"os"
 	"testing"
 	"time"
 	"unicode/utf8"
-	
+
 	termbox "github.com/nsf/termbox-go"
-	talk "github.com/nolash/psstalk/client"
+	"github.com/nolash/psstalk/term"
+
+	pssclient "github.com/ethereum/go-ethereum/swarm/pss/client"
+	"github.com/ethereum/go-ethereum/swarm/pss"
+	"github.com/ethereum/go-ethereum/swarm/network"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/protocols"
 )
 
 var (
 	unsentColor termbox.Attribute = termbox.ColorWhite
-	pendingColor termbox.Attribute = termbox.ColorBlue
+	pendingColor termbox.Attribute = termbox.ColorDefault
 	successColor termbox.Attribute = termbox.ColorGreen
 	failColor termbox.Attribute = termbox.ColorRed
 	maxRandomLineLength int
 	minRandomLineLength int
+	chatlog log.Logger
+	fakeselfaddr = network.RandomAddr().OAddr
+	fakeotheraddr = network.RandomAddr().OAddr
 )
 
 // initialize the client buffer handler
 // draw the mid screen separator
 func init() {
 	var err error
-	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
-	
-	client = talk.NewTalkClient(2)
-	
+
+	hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
+	hf := log.LvlFilterHandler(log.LvlTrace, hs)
+	h := log.CallerFileHandler(hf)
+	log.Root().SetHandler(h)
+
+	chatlog = log.New("chatlog", "main")
+	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
+
+	client = term.NewTalkClient(2)
+
 	err = termbox.Init()
 	if err != nil {
 		panic("could not init termbox")
@@ -43,6 +64,7 @@ func init() {
 		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
 	}
 	termbox.Flush()
+
 }
 
 
@@ -52,18 +74,18 @@ func TestRandomOutput(t *testing.T) {
 	chatC := make(chan []rune)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
-	
+
 	rand.Seed(time.Now().Unix())
-	
+
 	addSrc("bob", termbox.ColorYellow)
 	addSrc("alice", termbox.ColorGreen)
-	
+
 	logticker := time.NewTicker(time.Millisecond * 250)
 	chatticker := time.NewTicker(time.Millisecond * 600)
-	
+
 	go func() {
 		for i := 0; run; i++ {
-			r := randomLine([]rune{int32((i / 10) % 10) + 48, int32(i % 10) + 48, 46, 46, 46, 32})
+			r := randomLine([]rune{int32((i / 10) % 10) + 48, int32(i % 10) + 48, 46, 46, 46, 32}, 0)
 			select {
 				case <- chatticker.C:
 					client.Buffers[0].Add(randomSrc(), r)
@@ -76,9 +98,9 @@ func TestRandomOutput(t *testing.T) {
 					chatticker.Stop()
 					break
 			}
-		}	
+		}
 	}()
-	
+
 	go func() {
 		for run {
 			select {
@@ -93,7 +115,7 @@ func TestRandomOutput(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	for run {
 		ev := termbox.PollEvent()
 		if ev.Type == termbox.EventKey {
@@ -105,11 +127,10 @@ func TestRandomOutput(t *testing.T) {
 				freeze = true
 			}
 		}
-	} 
-	
+	}
+
 	termbox.Close()
 }
-
 
 func TestInputAndRandomOutput(t *testing.T) {
 	//var err error
@@ -118,16 +139,16 @@ func TestInputAndRandomOutput(t *testing.T) {
 	promptC := make(chan bool)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
-	
+
 	prompt.Reset()
-	
+
 	rand.Seed(time.Now().Unix())
-	
+
 	otherticker := time.NewTicker(time.Millisecond * 2500)
-	
+
 	go func() {
 		for i := 0; run; i++ {
-			r := randomLine([]rune{int32((i / 10) % 10) + 48, int32(i % 10) + 48, 46, 46, 46, 32})
+			r := randomLine([]rune{int32((i / 10) % 10) + 48, int32(i % 10) + 48, 46, 46, 46, 32}, 0)
 			select {
 				case <- otherticker.C:
 					client.Buffers[1].Add(randomSrc(), r)
@@ -136,9 +157,9 @@ func TestInputAndRandomOutput(t *testing.T) {
 					otherticker.Stop()
 					break
 			}
-		}	
+		}
 	}()
-	
+
 	go func() {
 		for run {
 			select {
@@ -156,9 +177,9 @@ func TestInputAndRandomOutput(t *testing.T) {
 			}
 		}
 	}()
-	
+
 	termbox.SetCursor(0, 0)
-	
+
 	for run {
 		before := prompt.Count / client.Width
 		ev := termbox.PollEvent()
@@ -193,15 +214,106 @@ func TestInputAndRandomOutput(t *testing.T) {
 					case termbox.KeySpace:
 						addToPrompt(runeSpace, before)
 						promptC <- true
-				} 
+				}
 			} else {
 				addToPrompt(ev.Ch, before)
 				promptC <- true
-				
+
 			}
 		}
-	} 
-	
+	}
+
+	termbox.Close()
+}
+
+func TestPssInput(t *testing.T) {
+//	meC := make(chan []rune)
+	otherC := make(chan []rune)
+//	promptC := make(chan bool)
+	quitTickC := make(chan struct{})
+	pssC := make(chan interface{})
+	quitC := make(chan struct{})
+	quitPssC := make(chan struct{})
+	msgs := [][]byte{
+		[]byte("hello"),
+		[]byte("here"),
+		[]byte("is"),
+		[]byte("pss!"),
+	}
+	addSrc("bob", termbox.ColorYellow)
+
+	prompt.Reset()
+
+	rand.Seed(time.Now().Unix())
+
+	otherticker := time.NewTicker(time.Millisecond * 500)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	psc, ps := newPss(t, ctx, cancel, pssC, quitPssC)
+	psc.Start()
+
+	// set up the message to send
+	code, ok := chatProtocol.GetCode(&chatMsg{})
+	if !ok {
+		t.Fatalf("get chatmsg code fail!")
+	}
+	go func() {
+		serial := 1
+		for run {
+			select {
+				case <- otherticker.C:
+					payload := chatMsg{
+						Serial: uint64(serial),
+						Content: msgs[(serial - 1) % len(msgs)],
+						Source: "bar",
+					}
+					pmsg, err := pss.NewProtocolMsg(code, payload)
+					if err != nil {
+					t.Fatalf("new protocomsg fail: %v", err)
+					}
+
+					env := pss.NewPssEnvelope(fakeotheraddr, chatTopic, pmsg)
+
+					ps.Process(&pss.PssMsg{
+						To: fakeselfaddr,
+						Payload: env,
+					})
+					serial++
+				case msg := <-pssC:
+					chatmsg, ok := msg.(*chatMsg)
+					if !ok {
+						chatlog.Crit("Could not parse chatmsg", "msg", msg)
+						quitC<-struct{}{}
+					}
+					r := []rune{int32(chatmsg.Serial + 0x30), int32(0x3D)}
+					for _, b := range chatmsg.Content {
+						r = append(r, int32(b))
+					}
+					client.Buffers[1].Add(randomSrc(), r)
+					otherC <- r
+					if chatmsg.Serial > 9 {
+						quitC<-struct{}{}
+					}
+				case <- quitTickC:
+					run = false
+					otherticker.Stop()
+					quitPssC <- struct{}{}
+					break
+			}
+		}
+	}()
+
+	go func() {
+		for run {
+			select {
+				case <- otherC:
+					updateView(client.Buffers[1], client.Lines[0] + 1, client.Lines[1])
+					termbox.Flush()
+			}
+		}
+	}()
+	<-quitC
+	quitTickC <- struct{}{}
 	termbox.Close()
 }
 
@@ -219,11 +331,13 @@ func updateSize() {
 }
 
 // generate a random line of content
-func randomLine(prefix []rune) (rline []rune) {
+func randomLine(prefix []rune, rlinelen int) (rline []rune) {
 	b := make([]byte, 1)
-	rlinelen := (rand.Int() % (maxRandomLineLength - minRandomLineLength)) + minRandomLineLength + 1
+	if rlinelen == 0 {
+		rlinelen = (rand.Int() % (maxRandomLineLength - minRandomLineLength)) + minRandomLineLength + 1
+	}
 	for i := 0; i < rlinelen; i++ {
-		rand.Read(b) 
+		rand.Read(b)
 		b[0] = b[0] % 26 + 40
 		r, _ := utf8.DecodeRune(b)
 		rline = append(rline, r)
@@ -270,9 +384,9 @@ func removeFromPrompt(before int) {
 				break
 			}
 		}
-		updateView(client.Buffers[0], 0, client.Lines[0] - (now + 1)) 
+		updateView(client.Buffers[0], 0, client.Lines[0] - (now + 1))
 	}
-	updatePromptView()	
+	updatePromptView()
 }
 
 func updatePromptView() {
@@ -283,7 +397,7 @@ func updatePromptView() {
 	for i = 0; i < prompt.Count; i++ {
 		termbox.SetCell(i % client.Width, prompt.Line + (i / client.Width), prompt.Buffer[i], unsentColor, bgAttr)
 	}
-	
+
 	// clear remaining lines
 	if  i % client.Width > 0 {
 		for ; i < client.Width; i++ {
@@ -291,3 +405,53 @@ func updatePromptView() {
 		}
 	}
 }
+
+func newPss(t *testing.T, ctx context.Context, cancel func(), pssC chan interface{}, quitC chan struct{}) (*pssclient.PssClient, *pss.Pss) {
+	var err error
+	conf := pssclient.NewPssClientConfig()
+
+	psc := pssclient.NewPssClient(ctx, cancel, conf)
+
+	ps := pss.NewTestPss(fakeselfaddr)
+	err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, newProtocol(pssC))
+	if err != nil {
+		t.Fatalf("pss create fail: %v", err)
+	}
+
+	srv := rpc.NewServer()
+	srv.RegisterName("pss", pss.NewPssAPI(ps))
+	ws := srv.WebsocketHandler([]string{"*"})
+	uri := fmt.Sprintf("%s:%d", "localhost", 8546)
+
+	sock, err := net.Listen("tcp", uri)
+	if err != nil {
+		t.Fatalf("Tcp (recv) on %s failed: %v", uri, err)
+	}
+
+	go func() {
+		http.Serve(sock, ws)
+	}()
+
+	go func() {
+		<-quitC
+		sock.Close()
+	}()
+	return psc, ps
+}
+
+func newProtocol(pssC chan interface{}) *p2p.Protocol {
+	chatctrl := chatCtrl{
+		inC: pssC,
+	}
+	return &p2p.Protocol {
+		Name: chatProtocol.Name,
+		Version: chatProtocol.Version,
+		Length: 3,
+		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+			pp := protocols.NewPeer(p, rw, chatProtocol)
+			pp.Run(chatctrl.chatHandler)
+			return nil
+		},
+	}
+}
+

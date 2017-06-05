@@ -3,8 +3,31 @@ package main
 import (
 	"math/rand"
 	termbox "github.com/nsf/termbox-go"
-	talk "github.com/nolash/psstalk/client"
+	"github.com/nolash/psstalk/term"
+	"github.com/ethereum/go-ethereum/p2p/protocols"
+	"github.com/ethereum/go-ethereum/swarm/pss"
 )
+
+
+var chatProtocol = &protocols.Spec{
+	Name: "psschat",
+	Version: 1,
+	MaxMsgSize: 1024,
+	Messages: []interface{}{
+		chatMsg{}, chatPing{}, chatAck{},
+	},
+}
+
+var chatTopic = pss.NewTopic(chatProtocol.Name, int(chatProtocol.Version))
+
+type chatCtrl struct {
+	inC chan interface{}
+}
+
+func (self *chatCtrl) chatHandler(msg interface{}) error {
+	self.inC <- msg
+	return nil
+}
 
 type Prompt struct {
 	Buffer []rune
@@ -30,9 +53,9 @@ func (self *Prompt) Remove() {
 
 var (
 	prompt *Prompt = &Prompt{}
-	client *talk.TalkClient
+	client *term.TalkClient
 	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
-	srcFormat map[*talk.TalkSource]termbox.Attribute
+	srcFormat map[*term.TalkSource]termbox.Attribute
 	bgAttr = termbox.ColorBlack
 	bgClearAttr = termbox.ColorBlue
 	runeDash rune = 45
@@ -41,7 +64,7 @@ var (
 
 // add a chat source (peer)
 func addSrc(nick string, format termbox.Attribute) error {
-	src := &talk.TalkSource{
+	src := &term.TalkSource{
 		Nick: nick,
 	}
 	client.Sources = append(client.Sources, src)
@@ -50,7 +73,7 @@ func addSrc(nick string, format termbox.Attribute) error {
 }
 
 // get a random source
-func randomSrc() *talk.TalkSource {
+func randomSrc() *term.TalkSource {
 	if len(client.Sources) == 0 {
 		return nil
 	}
@@ -59,22 +82,23 @@ func randomSrc() *talk.TalkSource {
 
 // startline: termbox line to start refresh from
 // viewportheight: height of termbox viewport for buffer
-func updateView(buf *talk.TalkBuffer, startline int, viewportheight int) {
+func updateView(buf *term.TalkBuffer, startline int, viewportheight int) {
 	var skip int
 	lines := 0
 	bufline, skip := getStartPosition(buf.Buffer, viewportheight)
-	
+
 	for i := bufline; i < len(buf.Buffer); i++ {
 		var ii int
-		var r rune
-		for ii, r = range buf.Buffer[i].Content {
+		content := buf.Buffer[i].Runes("")
+		//for ii, r = range buf.Buffer[i].Content {
+		for ii, r := range content {
 			if ii < skip {
 				continue
 			}
 			termbox.SetCell((ii - skip) % client.Width, startline + lines + ((ii - skip) / client.Width), r, srcFormat[buf.Buffer[i].Source], bgAttr)
 		}
 		lines += ((ii - skip) / client.Width) + 1
-		partialfill := len(buf.Buffer[i].Content) % client.Width
+		partialfill := len(content) % client.Width
 		for ; partialfill < client.Width; partialfill++ {
 			termbox.SetCell(partialfill, startline + lines - 1, runeSpace, bgAttr, bgClearAttr)
 		}
@@ -84,7 +108,7 @@ func updateView(buf *talk.TalkBuffer, startline int, viewportheight int) {
 
 // work lines (buffer entries) backwards from end of buffer till viewport height threshold is reached 
 // within the line, find the cell index of the row thats on the threshold
-func getStartPosition(buf []talk.TalkEntry, viewportheight int) (bufstartline int, bufstartidx int) { 
+func getStartPosition(buf []term.TalkEntry, viewportheight int) (bufstartline int, bufstartidx int) { 
 	lines := 0
 	for bufstartline = len(buf); bufstartline > 0; bufstartline-- {
 		currentlines := lineRows(buf[bufstartline - 1].Content)
