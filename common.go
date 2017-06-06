@@ -2,11 +2,15 @@ package main
 
 import (
 	"math/rand"
+	//"time"
+
 	termbox "github.com/nsf/termbox-go"
 	"github.com/nolash/psstalk/term"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/swarm/pss"
 )
+
+
 
 
 var chatProtocol = &protocols.Spec{
@@ -22,10 +26,18 @@ var chatTopic = pss.NewTopic(chatProtocol.Name, int(chatProtocol.Version))
 
 type chatCtrl struct {
 	inC chan interface{}
+	peer *protocols.Peer
+	oAddr []byte
 }
 
 func (self *chatCtrl) chatHandler(msg interface{}) error {
-	self.inC <- msg
+	if self.inC != nil {
+		self.inC <- msg
+	}
+	/*self.peer.Send(chatMsg{
+		Source: fmt.Sprintf("%x",
+		Content: txtreplies[rand.Int() % len(txtreplies)],
+	}*/
 	return nil
 }
 
@@ -63,21 +75,37 @@ var (
 )
 
 // add a chat source (peer)
-func addSrc(nick string, format termbox.Attribute) error {
+func addSrc(label string, nick string, format termbox.Attribute) error {
 	src := &term.TalkSource{
 		Nick: nick,
 	}
-	client.Sources = append(client.Sources, src)
+	client.Sources[label] = src
 	srcFormat[src] = format
 	return nil
 }
 
+// get a source from key
+func getSrc(label string) *term.TalkSource {
+	return client.Sources[label]
+}
+
 // get a random source
 func randomSrc() *term.TalkSource {
-	if len(client.Sources) == 0 {
-		return nil
+	emptysrc := &term.TalkSource{
+		Nick: "noone",
 	}
-	return client.Sources[rand.Int() % len(client.Sources)]
+	if len(client.Sources) == 0 {
+		return emptysrc
+	}
+	idx := rand.Int() % len(client.Sources)
+	i := 0
+	for _, s := range client.Sources {
+		if i == idx {
+			return s
+		}
+		i++
+	}
+	return emptysrc
 }
 
 // startline: termbox line to start refresh from
@@ -129,4 +157,63 @@ func getStartPosition(buf []term.TalkEntry, viewportheight int) (bufstartline in
 func lineRows(rline []rune) int {
 	return (len(rline) / client.Width) + 1
 }
+
+func addToPrompt(r rune, before int) {
+	prompt.Add(r)
+	// if the line count changes also update the message buffer, less the lines that the prompt buffer occupies
+	promptlines := prompt.Count / client.Width
+	if prompt.Count/client.Width > before {
+		viewlines := 0
+		for _, entry := range client.Buffers[0].Buffer {
+			viewlines += lineRows(entry.Content)
+			if viewlines >= client.Lines[0] {
+				prompt.Line--
+				for i := 0; i < client.Width; i++ {
+					termbox.SetCell(i, prompt.Line+(prompt.Count/client.Width), runeSpace, bgAttr, bgAttr)
+				}
+				break
+			}
+		}
+		updateView(client.Buffers[0], 0, client.Lines[0]-(promptlines+1)-1)
+	}
+	updatePromptView()
+}
+
+func removeFromPrompt(before int) {
+	if prompt.Count == 0 {
+		return
+	}
+	prompt.Remove()
+	now := prompt.Count / client.Width
+	if now < before {
+		viewlines := 0
+		for _, entry := range client.Buffers[0].Buffer {
+			viewlines += lineRows(entry.Content)
+			if viewlines > client.Lines[0] {
+				prompt.Line++
+				break
+			}
+		}
+		updateView(client.Buffers[0], 0, client.Lines[0]-(now+1))
+	}
+	updatePromptView()
+}
+
+func updatePromptView() {
+	var i int
+	//lines := prompt.Line + (prompt.Count / client.Width)
+
+	// write buffer to terminal at prompt position
+	for i = 0; i < prompt.Count; i++ {
+		termbox.SetCell(i%client.Width, prompt.Line+(i/client.Width), prompt.Buffer[i], unsentColor, bgAttr)
+	}
+
+	// clear remaining lines
+	if i%client.Width > 0 {
+		for ; i < client.Width; i++ {
+			termbox.SetCell(i%client.Width, prompt.Line+(i/client.Width), runeSpace, bgAttr, bgAttr)
+		}
+	}
+}
+
 
