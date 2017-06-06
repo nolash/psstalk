@@ -309,7 +309,7 @@ func TestPssReceive(t *testing.T) {
 					t.Fatalf("new protocomsg fail: %v", err)
 				}
 
-				env := pss.NewPssEnvelope(fakepots[fakenodeconfigs[1].ID].Bytes(), chatTopic, pmsg)
+				env := pss.NewEnvelope(fakepots[fakenodeconfigs[1].ID].Bytes(), chatTopic, pmsg)
 
 				ps.Process(&pss.PssMsg{
 					To:      fakepots[fakenodeconfigs[0].ID].Bytes(),
@@ -504,7 +504,7 @@ func TestCur(t *testing.T) {
 
 	var conncount int
 	var fakenodes []adapters.Node
-	fakeclients := make(map[discover.NodeID]*pssclient.PssClient)
+	fakeclients := make(map[discover.NodeID]*pssclient.Client)
 
 	var serialself int32 = 1
 	var serialother int32 = 1
@@ -557,7 +557,7 @@ func TestCur(t *testing.T) {
 			shutdown(t, fmt.Errorf("error getting node rpc: %v", err))
 		}
 
-		fakeclients[cfg.ID] = pssclient.NewPssClientWithRPC(ctx, fakerpc)
+		fakeclients[cfg.ID] = pssclient.NewClientWithRPC(ctx, fakerpc)
 		fakeclients[cfg.ID].Start()
 		fakeclients[cfg.ID].RunProtocol(newProtocol(inCs[cfg.ID], outCs[cfg.ID]))
 
@@ -777,18 +777,18 @@ func randomLine(prefix []rune, rlinelen int) (rline []rune) {
 	}
 	return
 }
-func newPss(t *testing.T, ctx context.Context, cancel func(), proto *p2p.Protocol, quitC chan struct{}) (*pssclient.PssClient, *pss.Pss) {
+func newPss(t *testing.T, ctx context.Context, cancel func(), proto *p2p.Protocol, quitC chan struct{}) (*pssclient.Client, *pss.Pss) {
 	var err error
 
-	conf := pssclient.NewPssClientConfig()
+	conf := pssclient.NewClientConfig()
 
-	psc := pssclient.NewPssClient(ctx, cancel, conf)
+	psc := pssclient.NewClient(ctx, cancel, conf)
 
 	ps := pss.NewTestPss(fakepots[fakenodeconfigs[0].ID].Bytes())
 
 	srv := rpc.NewServer()
-	srv.RegisterName("pss", pss.NewPssAPI(ps))
-	srv.RegisterName("psstest", pss.NewPssAPITest(ps))
+	srv.RegisterName("pss", pss.NewAPI(ps))
+	srv.RegisterName("psstest", pss.NewAPITest(ps))
 	ws := srv.WebsocketHandler([]string{"*"})
 	uri := fmt.Sprintf("%s:%d", "localhost", 8546)
 
