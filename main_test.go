@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io/ioutil"
+	"os"
 	"bytes"
 	"context"
 	"fmt"
@@ -21,6 +23,8 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/simulations"
 	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
 	"github.com/ethereum/go-ethereum/pot"
+	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/swarm/network"
 	"github.com/ethereum/go-ethereum/swarm/pss"
@@ -28,13 +32,13 @@ import (
 )
 
 var (
-	services = newServices(newProtocol)
+	services = newServices(newTestProtocol)
 	maxRandomLineLength int
 	minRandomLineLength int
 	fakenodeconfigs     []*adapters.NodeConfig
 	fakepots            = make(map[discover.NodeID]pot.Address)
 	outCs               = make(map[discover.NodeID]chan interface{})
-	inCs                = make(map[discover.NodeID]chan interface{})
+	inCs                = make(map[discover.NodeID]chan *chatMsg)
 )
 
 
@@ -53,7 +57,7 @@ func init() {
 		addr := network.ToOverlayAddr(fakenodeconfig.ID[:])
 		copy(potaddr[:], addr[:])
 		fakepots[fakenodeconfig.ID] = potaddr
-		inCs[fakenodeconfig.ID] = make(chan interface{})
+		inCs[fakenodeconfig.ID] = make(chan *chatMsg)
 		outCs[fakenodeconfig.ID] = make(chan interface{})
 	}
 
@@ -262,7 +266,7 @@ func TestPssReceive(t *testing.T) {
 
 	otherticker := time.NewTicker(time.Millisecond * 500)
 
-	proto := newProtocol(pssInC, pssOutC)
+	proto := newTestProtocol(pssInC, pssOutC)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, ps := newPss(t, ctx, cancel, proto, quitPssC)
@@ -299,12 +303,7 @@ func TestPssReceive(t *testing.T) {
 					Payload: env,
 				})
 				serial++
-			case msg := <-pssInC:
-				chatmsg, ok := msg.(*chatMsg)
-				if !ok {
-					chatlog.Crit("Could not parse chatmsg", "msg", msg)
-					quitC <- struct{}{}
-				}
+			case chatmsg := <-pssInC:
 				r := []rune{int32(chatmsg.Serial + 0x30), int32(0x3D)}
 				for _, b := range chatmsg.Content {
 					r = append(r, int32(b))
@@ -358,7 +357,7 @@ func TestPssSendAndReceive(t *testing.T) {
 
 	prompt.Reset()
 
-	proto := newProtocol(pssInC, pssOutC)
+	proto := newTestProtocol(pssInC, pssOutC)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	psc, _ := newPss(t, ctx, cancel, proto, quitPssC)
@@ -370,14 +369,9 @@ func TestPssSendAndReceive(t *testing.T) {
 	go func() {
 		for run {
 			select {
-			case msg := <-pssInC:
+			case chatmsg := <-pssInC:
 				var rs []rune
 				var buf *bytes.Buffer
-				chatmsg, ok := msg.(*chatMsg)
-				if !ok {
-					chatlog.Crit("Could not parse chatmsg", "msg", msg)
-					quitC <- struct{}{}
-				}
 				buf = bytes.NewBufferString(fmt.Sprintf("%d=", chatmsg.Serial))
 				for {
 					r, n, err := buf.ReadRune()
@@ -555,7 +549,7 @@ func TestCur (t *testing.T) {
 
 		fakeclients[cfg.ID] = pssclient.NewClientWithRPC(ctx, fakerpc)
 		fakeclients[cfg.ID].Start()
-		fakeclients[cfg.ID].RunProtocol(newProtocol(inCs[cfg.ID], outCs[cfg.ID]))
+		fakeclients[cfg.ID].RunProtocol(newTestProtocol(inCs[cfg.ID], outCs[cfg.ID]))
 
 		peerevents := make(chan *p2p.PeerEvent)
 		peersub, err := fakerpc.Subscribe(ctx, "admin", peerevents, "peerEvents")
@@ -604,6 +598,7 @@ func TestCur (t *testing.T) {
 		for run {
 			select {
 				case <-inCs[fakenodeconfigs[1].ID]:
+
 					go func() {
 						srcpot := fakepots[fakenodeconfigs[1].ID].Bytes()
 						dur, err := time.ParseDuration(fmt.Sprintf("%dms", (rand.Int() % 2500) + 500))
@@ -622,14 +617,9 @@ func TestCur (t *testing.T) {
 						atomic.AddInt32(&serialother, 1)
 					}()
 
-				case msg := <-inCs[fakenodeconfigs[0].ID]:
+				case chatmsg := <-inCs[fakenodeconfigs[0].ID]:
 					var rs []rune
 					var buf *bytes.Buffer
-					chatmsg, ok := msg.(*chatMsg)
-					if !ok {
-						chatlog.Crit("Could not parse chatmsg", "msg", msg)
-						quitC <- struct{}{}
-					}
 					buf = bytes.NewBufferString(fmt.Sprintf("%d=", chatmsg.Serial))
 					for {
 						r, n, err := buf.ReadRune()
@@ -717,7 +707,7 @@ func TestCur (t *testing.T) {
 						}
 					}
 
-					// send the message to ourselves using pssclient
+					// send on the outchannel, which writes to the pssclient rw
 					payload := chatMsg{
 						Serial:  uint64(serialself),
 						Content: buf.Bytes(),
@@ -803,7 +793,63 @@ func getLineLengths() {
 	maxRandomLineLength = int(float64(client.Width) * 2.8)
 }
 
-func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
+func newServices(protofunc func(chan *chatMsg, chan interface{}) *p2p.Protocol) adapters.Services {
+	stateStore := adapters.NewSimStateStore()
+	kademlias := make(map[discover.NodeID]*network.Kademlia)
+	kademlia := func(id discover.NodeID) *network.Kademlia {
+		if k, ok := kademlias[id]; ok {
+			return k
+		}
+		addr := network.NewAddrFromNodeID(id)
+		params := network.NewKadParams()
+		params.MinProxBinSize = 2
+		params.MaxBinSize = 3
+		params.MinBinSize = 1
+		params.MaxRetries = 1000
+		params.RetryExponent = 2
+		params.RetryInterval = 1000000
+		kademlias[id] = network.NewKademlia(addr.Over(), params)
+		return kademlias[id]
+	}
+	return adapters.Services{
+		"pss": func(ctx *adapters.ServiceContext) (node.Service, error) {
+			cachedir, err := ioutil.TempDir("", "pss-cache")
+			if err != nil {
+				return nil, fmt.Errorf("create pss cache tmpdir failed", "error", err)
+			}
+			dpa, err := storage.NewLocalDPA(cachedir)
+			if err != nil {
+				return nil, fmt.Errorf("local dpa creation failed", "error", err)
+			}
+
+			pssp := pss.NewPssParams(false)
+			ps := pss.NewPss(kademlia(ctx.Config.ID), dpa, pssp)
+
+			proto := protofunc(nil, nil)
+
+			err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
+			if err != nil {
+				chatlog.Error("Couldnt register chat protocol in pss service", "err", err)
+				os.Exit(1)
+			}
+
+			return ps, nil
+		},
+		"bzz": func(ctx *adapters.ServiceContext) (node.Service, error) {
+			addr := network.NewAddrFromNodeID(ctx.Config.ID)
+			params := network.NewHiveParams()
+			params.Discovery = false
+			config := &network.BzzConfig{
+				OverlayAddr:  addr.Over(),
+				UnderlayAddr: addr.Under(),
+				HiveParams:   params,
+			}
+			return network.NewBzz(config, kademlia(ctx.Config.ID), stateStore), nil
+		},
+	}
+}
+
+func newTestProtocol(inC chan *chatMsg, outC chan interface{}) *p2p.Protocol {
 	chatctrl := chatCtrl{
 		inC: inC,
 	}
@@ -833,4 +879,5 @@ func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
 		},
 	}
 }
+
 

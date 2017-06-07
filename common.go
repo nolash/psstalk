@@ -2,21 +2,12 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
-	"os"
-	//"time"
 
 	termbox "github.com/nsf/termbox-go"
 	"github.com/nolash/psstalk/term"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/swarm/pss"
-	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/swarm/network"
-	"github.com/ethereum/go-ethereum/swarm/storage"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/discover"
 )
 
 var (
@@ -37,7 +28,6 @@ var (
 
 )
 
-
 var chatProtocol = &protocols.Spec{
 	Name: "psschat",
 	Version: 1,
@@ -50,19 +40,18 @@ var chatProtocol = &protocols.Spec{
 var chatTopic = pss.NewTopic(chatProtocol.Name, int(chatProtocol.Version))
 
 type chatCtrl struct {
-	inC chan interface{}
+	inC chan *chatMsg
 	peer *protocols.Peer
 	oAddr []byte
 }
 
 func (self *chatCtrl) chatHandler(msg interface{}) error {
-	if self.inC != nil {
-		self.inC <- msg
+	chatmsg, ok := msg.(*chatMsg)
+	if ok {
+		if self.inC != nil {
+			self.inC <- chatmsg
+		}
 	}
-	/*self.peer.Send(chatMsg{
-		Source: fmt.Sprintf("%x",
-		Content: txtreplies[rand.Int() % len(txtreplies)],
-	}*/
 	return nil
 }
 
@@ -260,62 +249,6 @@ func updatePromptView() {
 		for ; i < client.Width; i++ {
 			termbox.SetCell(i%client.Width, prompt.Line+(i/client.Width), runeSpace, bgAttr, bgAttr)
 		}
-	}
-}
-
-func newServices(protofunc func(chan interface{}, chan interface{}) *p2p.Protocol) adapters.Services {
-	stateStore := adapters.NewSimStateStore()
-	kademlias := make(map[discover.NodeID]*network.Kademlia)
-	kademlia := func(id discover.NodeID) *network.Kademlia {
-		if k, ok := kademlias[id]; ok {
-			return k
-		}
-		addr := network.NewAddrFromNodeID(id)
-		params := network.NewKadParams()
-		params.MinProxBinSize = 2
-		params.MaxBinSize = 3
-		params.MinBinSize = 1
-		params.MaxRetries = 1000
-		params.RetryExponent = 2
-		params.RetryInterval = 1000000
-		kademlias[id] = network.NewKademlia(addr.Over(), params)
-		return kademlias[id]
-	}
-	return adapters.Services{
-		"pss": func(ctx *adapters.ServiceContext) (node.Service, error) {
-			cachedir, err := ioutil.TempDir("", "pss-cache")
-			if err != nil {
-				return nil, fmt.Errorf("create pss cache tmpdir failed", "error", err)
-			}
-			dpa, err := storage.NewLocalDPA(cachedir)
-			if err != nil {
-				return nil, fmt.Errorf("local dpa creation failed", "error", err)
-			}
-
-			pssp := pss.NewPssParams(false)
-			ps := pss.NewPss(kademlia(ctx.Config.ID), dpa, pssp)
-
-			proto := protofunc(nil, nil)
-
-			err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
-			if err != nil {
-				chatlog.Error("Couldnt register chat protocol in pss service", "err", err)
-				os.Exit(1)
-			}
-
-			return ps, nil
-		},
-		"bzz": func(ctx *adapters.ServiceContext) (node.Service, error) {
-			addr := network.NewAddrFromNodeID(ctx.Config.ID)
-			params := network.NewHiveParams()
-			params.Discovery = false
-			config := &network.BzzConfig{
-				OverlayAddr:  addr.Over(),
-				UnderlayAddr: addr.Under(),
-				HiveParams:   params,
-			}
-			return network.NewBzz(config, kademlia(ctx.Config.ID), stateStore), nil
-		},
 	}
 }
 

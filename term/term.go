@@ -64,11 +64,17 @@ func (self *TalkBuffer) Last() *TalkEntry {
 	return &self.Buffer[len(self.Buffer) - 1]
 }
 
+func (self *TalkBuffer) Count() int {
+	return len(self.Buffer)
+}
+
 type TalkClient struct {
 	Sources map[string]*TalkSource
 	Buffers []*TalkBuffer
+	History []*TalkEntry
 	Width int
 	Lines []int
+	Serial int
 }
 
 func NewTalkClient(buffercount int) (c *TalkClient) {
@@ -76,9 +82,11 @@ func NewTalkClient(buffercount int) (c *TalkClient) {
 		Buffers: make([]*TalkBuffer, buffercount),
 		Lines: make([]int, buffercount),
 		Sources: make(map[string]*TalkSource),
+		Serial: 1,
 	}
 	for i := 0; i < buffercount; i++ {
 		c.Buffers[i] = &TalkBuffer{}
 	}
 	return
 }
+

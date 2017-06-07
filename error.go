@@ -1,27 +1,35 @@
 package main
 
+import (
+	"fmt"
+)
+
 const (
-	pssTalkErrorInit = iota
+	eInit = iota
+	ePss
 )
 
 var (
 	pssTalkErrorString = map[int]string{
-		pssTalkErrorInit: "Initialize",
+		eInit: "Initialize",
+		ePss: "Pss backend",
 	}
 )
 
 type pssTalkError struct {
 	code int
+	info string
 }
 
-func newPssTalkError(code int) error {
+func newError(code int, info string) error {
 	return &pssTalkError{
 		code: code,
+		info: info,
 	}
 }
 
 func (e *pssTalkError) Error() string {
-	return pssTalkErrorString[e.code]
+	return fmt.Sprintf("%s: %s", pssTalkErrorString[e.code], e.info)
 }
 
 
