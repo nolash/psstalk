@@ -1,57 +1,44 @@
 package main
 
 import (
-//	"fmt"
-//	"os"
-	termbox "github.com/nsf/termbox-go"
-//	"github.com/nolash/psstalk/term"
+	"github.com/nolash/psstalk/term"
+	"github.com/ethereum/go-ethereum/log"
+	"os"
 )
 
 var (
 	myNick string = "self"
 	run bool = true
 	freeze bool = false
+	chatlog log.Logger
 )
 
-// initialize the client buffer handler
-// draw the mid screen separator
-//func init() {
-//	var err error
-//	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
-//	client = term.NewTalkClient(2)
-//	err = termbox.Init()
-//	if err != nil {
-//		panic("could not init termbox")
-//	}
-//	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
-//	if err != nil {
-//		fmt.Printf("cant clear %v", err)
-//		os.Exit(1)
-//	}
-//	updateSize()
-//	for i := 0; i < client.Width; i++ {
-//		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
-//	}
-//	termbox.Flush()
-//}
-//
-func main() {
-	//var err error
-	quitC := make(chan struct{})
+func init() {
+	hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
+	hf := log.LvlFilterHandler(log.LvlTrace, hs)
+	h := log.CallerFileHandler(hf)
+	log.Root().SetHandler(h)
+	chatlog = log.New("chatlog", "main")
+}
 
-	for run {
-		ev := termbox.PollEvent()
-		if ev.Type == termbox.EventKey {
-			if freeze {
-				quitC <- struct{}{}
-				break
-			} else {
-				freeze = true
-			}
-		}
+func main() {
+	var err error
+	//quitC := make(chan struct{})
+
+	client = term.NewTalkClient(2)
+
+	err = startup()
+	if err != nil {
+		e := newPssTalkError(pssTalkErrorInit)
+		chatlog.Crit(e.Error())
+		os.Exit(1)
 	}
 
-//	termbox.Close()
+	prompt.Reset()
+
+	chatlog.Debug("ok")
+
+	shutdown()
 }
 
 

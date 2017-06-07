@@ -1,16 +1,41 @@
 package main
 
 import (
+	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
 	//"time"
 
 	termbox "github.com/nsf/termbox-go"
 	"github.com/nolash/psstalk/term"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/swarm/pss"
+	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
+	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/swarm/network"
+	"github.com/ethereum/go-ethereum/swarm/storage"
+	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 )
 
+var (
+	pssServiceName                        = "pss"
+	bzzServiceName                        = "bzz"
+	unsentColor         termbox.Attribute = termbox.ColorWhite
+	pendingColor        termbox.Attribute = termbox.ColorDefault
+	successColor        termbox.Attribute = termbox.ColorGreen
+	failColor           termbox.Attribute = termbox.ColorRed
+	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
+	prompt *Prompt = &Prompt{}
+	client *term.TalkClient
+	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
+	bgAttr = termbox.ColorBlack
+	bgClearAttr = termbox.ColorBlack
+	runeDash rune = 45
+	runeSpace rune = 32
 
+)
 
 
 var chatProtocol = &protocols.Spec{
@@ -62,18 +87,6 @@ func (self *Prompt) Remove() {
 	self.Count--
 }
 
-
-var (
-	prompt *Prompt = &Prompt{}
-	client *term.TalkClient
-	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
-	srcFormat map[*term.TalkSource]termbox.Attribute
-	bgAttr = termbox.ColorBlack
-	bgClearAttr = termbox.ColorBlack
-	runeDash rune = 45
-	runeSpace rune = 32
-)
-
 // add a chat source (peer)
 func addSrc(label string, nick string, format termbox.Attribute) error {
 	src := &term.TalkSource{
@@ -106,6 +119,29 @@ func randomSrc() *term.TalkSource {
 		i++
 	}
 	return emptysrc
+}
+
+func startup() error {
+	var err error
+	err = termbox.Init()
+	if err != nil {
+		panic("could not init termbox")
+	}
+	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
+	if err != nil {
+		shutdown()
+		return fmt.Errorf("Couldn't clear screen: %v", err)
+	}
+	updateSize()
+	for i := 0; i < client.Width; i++ {
+		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
+	}
+	termbox.Flush()
+	return nil
+}
+
+func shutdown() {
+	termbox.Close()
 }
 
 // startline: termbox line to start refresh from
@@ -199,6 +235,17 @@ func removeFromPrompt(before int) {
 	updatePromptView()
 }
 
+// split the screen vertically in two
+func updateSize() {
+	var h int
+	client.Width, h = termbox.Size()
+	client.Lines[0] = h / 2
+	client.Lines[1] = client.Lines[0]
+	if (client.Lines[0]/2)*2 == client.Lines[0] {
+		client.Lines[1]--
+	}
+}
+
 func updatePromptView() {
 	var i int
 	//lines := prompt.Line + (prompt.Count / client.Width)
@@ -216,4 +263,59 @@ func updatePromptView() {
 	}
 }
 
+func newServices(protofunc func(chan interface{}, chan interface{}) *p2p.Protocol) adapters.Services {
+	stateStore := adapters.NewSimStateStore()
+	kademlias := make(map[discover.NodeID]*network.Kademlia)
+	kademlia := func(id discover.NodeID) *network.Kademlia {
+		if k, ok := kademlias[id]; ok {
+			return k
+		}
+		addr := network.NewAddrFromNodeID(id)
+		params := network.NewKadParams()
+		params.MinProxBinSize = 2
+		params.MaxBinSize = 3
+		params.MinBinSize = 1
+		params.MaxRetries = 1000
+		params.RetryExponent = 2
+		params.RetryInterval = 1000000
+		kademlias[id] = network.NewKademlia(addr.Over(), params)
+		return kademlias[id]
+	}
+	return adapters.Services{
+		"pss": func(ctx *adapters.ServiceContext) (node.Service, error) {
+			cachedir, err := ioutil.TempDir("", "pss-cache")
+			if err != nil {
+				return nil, fmt.Errorf("create pss cache tmpdir failed", "error", err)
+			}
+			dpa, err := storage.NewLocalDPA(cachedir)
+			if err != nil {
+				return nil, fmt.Errorf("local dpa creation failed", "error", err)
+			}
+
+			pssp := pss.NewPssParams(false)
+			ps := pss.NewPss(kademlia(ctx.Config.ID), dpa, pssp)
+
+			proto := protofunc(nil, nil)
+
+			err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
+			if err != nil {
+				chatlog.Error("Couldnt register chat protocol in pss service", "err", err)
+				os.Exit(1)
+			}
+
+			return ps, nil
+		},
+		"bzz": func(ctx *adapters.ServiceContext) (node.Service, error) {
+			addr := network.NewAddrFromNodeID(ctx.Config.ID)
+			params := network.NewHiveParams()
+			params.Discovery = false
+			config := &network.BzzConfig{
+				OverlayAddr:  addr.Over(),
+				UnderlayAddr: addr.Under(),
+				HiveParams:   params,
+			}
+			return network.NewBzz(config, kademlia(ctx.Config.ID), stateStore), nil
+		},
+	}
+}
 

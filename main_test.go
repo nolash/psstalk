@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,11 +15,9 @@ import (
 	"github.com/nolash/psstalk/term"
 	termbox "github.com/nsf/termbox-go"
 
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/simulations"
 	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
 	"github.com/ethereum/go-ethereum/pot"
@@ -29,58 +25,26 @@ import (
 	"github.com/ethereum/go-ethereum/swarm/network"
 	"github.com/ethereum/go-ethereum/swarm/pss"
 	pssclient "github.com/ethereum/go-ethereum/swarm/pss/client"
-	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 var (
-	services                              = newServices()
-	pssServiceName                        = "pss"
-	bzzServiceName                        = "bzz"
-	unsentColor         termbox.Attribute = termbox.ColorWhite
-	pendingColor        termbox.Attribute = termbox.ColorDefault
-	successColor        termbox.Attribute = termbox.ColorGreen
-	failColor           termbox.Attribute = termbox.ColorRed
+	services = newServices(newProtocol)
 	maxRandomLineLength int
 	minRandomLineLength int
-	chatlog             log.Logger
 	fakenodeconfigs     []*adapters.NodeConfig
 	fakepots            = make(map[discover.NodeID]pot.Address)
 	outCs               = make(map[discover.NodeID]chan interface{})
 	inCs                = make(map[discover.NodeID]chan interface{})
 )
 
+
 // initialize the client buffer handler
 // draw the mid screen separator
 func init() {
 	var i int
-	var err error
 
 	client = term.NewTalkClient(2)
-
-	err = termbox.Init()
-	if err != nil {
-		panic("could not init termbox")
-	}
-	err = termbox.Clear(termbox.ColorYellow, termbox.ColorBlack)
-	if err != nil {
-		fmt.Printf("cant clear %v", err)
-		os.Exit(1)
-	}
-	updateSize()
-	for i := 0; i < client.Width; i++ {
-		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
-	}
-	termbox.Flush()
-
-	hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
-	hf := log.LvlFilterHandler(log.LvlTrace, hs)
-	h := log.CallerFileHandler(hf)
-	log.Root().SetHandler(h)
-
-	chatlog = log.New("chatlog", "main")
-	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
-
-	for i = 0; i < 3; i++ {
+		for i = 0; i < 3; i++ {
 		var potaddr pot.Address
 		fakenodeconfig := adapters.RandomNodeConfig()
 		fakenodeconfig.Services = []string{"bzz", "pss"}
@@ -101,11 +65,18 @@ func TestFoo(t *testing.T) {
 }
 
 func TestRandomOutput(t *testing.T) {
-	//var err error
+	var err error
 	logC := make(chan []rune)
 	chatC := make(chan []rune)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
+
+	err = startup()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	getLineLengths()
 
 	rand.Seed(time.Now().Unix())
 
@@ -161,16 +132,23 @@ func TestRandomOutput(t *testing.T) {
 		}
 	}
 
-	shutdown(t, nil)
+	shutdown()
 }
 
 func TestInputAndRandomOutput(t *testing.T) {
-	//var err error
+	var err error
 	meC := make(chan []rune)
 	otherC := make(chan []rune)
 	promptC := make(chan bool)
 	quitTickC := make(chan struct{})
 	quitC := make(chan struct{})
+
+	err = startup()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	getLineLengths()
 
 	prompt.Reset()
 
@@ -255,7 +233,7 @@ func TestInputAndRandomOutput(t *testing.T) {
 		}
 	}
 
-	shutdown(t, nil)
+	shutdown()
 }
 
 func TestPssReceive(t *testing.T) {
@@ -274,6 +252,11 @@ func TestPssReceive(t *testing.T) {
 	}
 
 	addSrc("only", "bob", termbox.ColorYellow)
+
+	err = startup()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	prompt.Reset()
 
@@ -351,10 +334,11 @@ func TestPssReceive(t *testing.T) {
 	}()
 	<-quitC
 	quitTickC <- struct{}{}
-	shutdown(t, nil)
+	shutdown()
 }
 
 func TestPssSendAndReceive(t *testing.T) {
+	var err error
 	var potaddr pot.Address
 	var serial int = 1
 	meC := make(chan []rune)
@@ -366,6 +350,11 @@ func TestPssSendAndReceive(t *testing.T) {
 	quitPssC := make(chan struct{})
 
 	addSrc(fmt.Sprintf("%x", fakepots[fakenodeconfigs[0].ID].Bytes()[:8]), "bob", termbox.ColorYellow)
+
+	err = startup()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
 	prompt.Reset()
 
@@ -496,11 +485,13 @@ func TestPssSendAndReceive(t *testing.T) {
 			}
 		}
 	}
-	shutdown(t, nil)
+	shutdown()
 }
 
-func TestCur(t *testing.T) {
-//func TestPssSendAndReceiveFullLinear(t *testing.T) {
+func TestCur (t *testing.T) {
+//func TestPssSendAndAutoreplyFull(t *testing.T) {
+
+	//var err error
 
 	var conncount int
 	var fakenodes []adapters.Node
@@ -525,6 +516,8 @@ func TestCur(t *testing.T) {
 	addSrc(fmt.Sprintf("%x", fakepots[fakenodeconfigs[0].ID].Bytes()[:8]), "bob", termbox.ColorYellow)
 	addSrc(fmt.Sprintf("%x", fakepots[fakenodeconfigs[1].ID].Bytes()[:8]), "alice", termbox.ColorCyan)
 
+	startup()
+
 	prompt.Reset()
 
 	ctx, _ := context.WithCancel(context.Background())
@@ -544,17 +537,20 @@ func TestCur(t *testing.T) {
 		chatlog.Debug("fakenode", "idx", i, "addr", fakepots[cfg.ID], "id", fmt.Sprintf("%x", cfg.ID[:8]))
 		fakenode, err := simnet.NewNodeWithConfig(cfg)
 		if err != nil {
-			shutdown(t, fmt.Errorf("couldn't start node: %v", err))
+			shutdown()
+			t.Fatalf("node create fail: %v", err)
 		}
 		fakenodes = append(fakenodes, fakenode)
 
 		if err := simnet.Start(fakenode.ID()); err != nil {
-			shutdown(t, fmt.Errorf("error starting node: %v", err))
+			shutdown()
+			t.Fatalf("node start fail: %v", err)
 		}
 
 		fakerpc, err := fakenode.Client()
 		if err != nil {
-			shutdown(t, fmt.Errorf("error getting node rpc: %v", err))
+			shutdown()
+			t.Fatalf("rpc err: %v", err)
 		}
 
 		fakeclients[cfg.ID] = pssclient.NewClientWithRPC(ctx, fakerpc)
@@ -564,7 +560,8 @@ func TestCur(t *testing.T) {
 		peerevents := make(chan *p2p.PeerEvent)
 		peersub, err := fakerpc.Subscribe(ctx, "admin", peerevents, "peerEvents")
 		if err != nil {
-			shutdown(t, fmt.Errorf("error getting peer events for node %v: %s", cfg.ID, err))
+			shutdown()
+			t.Fatalf("node subscribe fail: %v", err)
 		}
 
 		go func() {
@@ -744,21 +741,9 @@ func TestCur(t *testing.T) {
 
 	quitRPCC <- struct{}{}
 
-	shutdown(t, nil)
+	shutdown()
 }
 
-// split the screen vertically in two
-func updateSize() {
-	var h int
-	client.Width, h = termbox.Size()
-	client.Lines[0] = h / 2
-	client.Lines[1] = client.Lines[0]
-	if (client.Lines[0]/2)*2 == client.Lines[0] {
-		client.Lines[1]--
-	}
-	minRandomLineLength = int(float64(client.Width) * 0.4)
-	maxRandomLineLength = int(float64(client.Width) * 2.8)
-}
 
 // generate a random line of content
 func randomLine(prefix []rune, rlinelen int) (rline []rune) {
@@ -777,6 +762,7 @@ func randomLine(prefix []rune, rlinelen int) (rline []rune) {
 	}
 	return
 }
+
 func newPss(t *testing.T, ctx context.Context, cancel func(), proto *p2p.Protocol, quitC chan struct{}) (*pssclient.Client, *pss.Pss) {
 	var err error
 
@@ -812,6 +798,11 @@ func newPss(t *testing.T, ctx context.Context, cancel func(), proto *p2p.Protoco
 	return psc, ps
 }
 
+func getLineLengths() {
+	minRandomLineLength = int(float64(client.Width) * 0.4)
+	maxRandomLineLength = int(float64(client.Width) * 2.8)
+}
+
 func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
 	chatctrl := chatCtrl{
 		inC: inC,
@@ -843,65 +834,3 @@ func newProtocol(inC chan interface{}, outC chan interface{}) *p2p.Protocol {
 	}
 }
 
-func newServices() adapters.Services {
-	stateStore := adapters.NewSimStateStore()
-	kademlias := make(map[discover.NodeID]*network.Kademlia)
-	kademlia := func(id discover.NodeID) *network.Kademlia {
-		if k, ok := kademlias[id]; ok {
-			return k
-		}
-		addr := network.NewAddrFromNodeID(id)
-		params := network.NewKadParams()
-		params.MinProxBinSize = 2
-		params.MaxBinSize = 3
-		params.MinBinSize = 1
-		params.MaxRetries = 1000
-		params.RetryExponent = 2
-		params.RetryInterval = 1000000
-		kademlias[id] = network.NewKademlia(addr.Over(), params)
-		return kademlias[id]
-	}
-	return adapters.Services{
-		"pss": func(ctx *adapters.ServiceContext) (node.Service, error) {
-			cachedir, err := ioutil.TempDir("", "pss-cache")
-			if err != nil {
-				return nil, fmt.Errorf("create pss cache tmpdir failed", "error", err)
-			}
-			dpa, err := storage.NewLocalDPA(cachedir)
-			if err != nil {
-				return nil, fmt.Errorf("local dpa creation failed", "error", err)
-			}
-
-			pssp := pss.NewPssParams(false)
-			ps := pss.NewPss(kademlia(ctx.Config.ID), dpa, pssp)
-
-			proto := newProtocol(nil, nil)
-
-			err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
-			if err != nil {
-				chatlog.Error("Couldnt register chat protocol in pss service", "err", err)
-				os.Exit(1)
-			}
-
-			return ps, nil
-		},
-		"bzz": func(ctx *adapters.ServiceContext) (node.Service, error) {
-			addr := network.NewAddrFromNodeID(ctx.Config.ID)
-			params := network.NewHiveParams()
-			params.Discovery = false
-			config := &network.BzzConfig{
-				OverlayAddr:  addr.Over(),
-				UnderlayAddr: addr.Under(),
-				HiveParams:   params,
-			}
-			return network.NewBzz(config, kademlia(ctx.Config.ID), stateStore), nil
-		},
-	}
-}
-
-func shutdown(t *testing.T, err error) {
-	termbox.Close()
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-}
