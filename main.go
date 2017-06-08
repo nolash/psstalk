@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
+	"fmt"
 	"context"
 	"flag"
 	"github.com/nolash/psstalk/term"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/pot"
 	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/swarm/network"
 	"github.com/ethereum/go-ethereum/node"
@@ -23,6 +26,7 @@ var (
 )
 
 var (
+	debugcount int
 	myNick string = "self"
 	run bool = true
 	freeze bool = false
@@ -155,38 +159,63 @@ func main() {
 					promptC <- true
 				// enter sends the message
 				case termbox.KeyEnter:
-					var b []byte
-					buf := bytes.NewBuffer(b)
-
 					line := prompt.Buffer
-					client.Buffers[0].Add(nil, line)
-					prompt.Line += (prompt.Count / client.Width) + 1
-					if prompt.Line > client.Lines[0]-1 {
-						prompt.Line = client.Lines[0] - 1
-					}
-					meC <- line
-					prompt.Reset()
-					for i := 0; i < client.Width; i++ {
-						termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
-					}
-					promptC <- true
+					res, payload, err := client.Process(line)
+					if err == nil {
+						if client.IsAddCmd() {
+							args := client.GetCmd()
+							b, _ := hex.DecodeString(args[1])
+							potaddr := pot.Address{}
+							copy(potaddr[:], b[:])
+							psc.AddPssPeer(potaddr, chatProtocol)
+						} else if client.IsSendCmd() && len(client.Sources) == 0 {
+							res = "noone to send to ... add someone first"
+							err = fmt.Errorf("no receivers")
+						} else {
+							if payload != "" {
+								// dispatch message
+								payload := chatMsg{
+									Serial:  uint64(client.Buffers[0].Count()),
+									Content: []byte(payload),
+									Source:  randomSrc().Nick,
+								}
 
-					// serialize the runes in the line to bytes
-					for _, r := range line {
-						n, err := buf.WriteRune(r)
-						if err != nil || n == 0 {
-							break
+								outC <- payload
+							}
+
+							// add the line to the history buffer for the local user
+							client.Buffers[0].Add(nil, line)
 						}
+
+						// move the prompt line down
+						// and back up if we hit the bottom of the viewport height
+						prompt.Line += (prompt.Count / client.Width) + 1
+						if prompt.Line > client.Lines[0]-1 {
+							prompt.Line = client.Lines[0] - 1
+						}
+
+						// update the local user viewport
+						meC <- line
+
+						// clear the prompt buffer
+						prompt.Reset()
+
+						// clear the prompt line in the viewport
+						for i := 0; i < client.Width; i++ {
+							termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
+						}
+
+						// update the prompt in the viewport
+						// (do we need this?)
+						promptC <- true
+
 					}
 
-					// send the message to ourselves using pssclient
-					payload := chatMsg{
-						Serial:  uint64(client.Buffers[0].Count()),
-						Content: buf.Bytes(),
-						Source:  randomSrc().Nick,
+					if len(res) > 0 {
+						resrunes := bytes.Runes([]byte(res))
+						client.Buffers[1].Add(nil, resrunes)
+						otherC <- resrunes
 					}
-
-					outC <- payload
 
 				case termbox.KeySpace:
 					addToPrompt(runeSpace, before)
@@ -201,6 +230,7 @@ func main() {
 	}
 
 	_ = psc
+
 	shutdown()
 }
 
@@ -241,7 +271,7 @@ func newProtocol(inC chan *chatMsg, outC chan interface{}) *p2p.Protocol {
 						case msg := <-outC:
 							err := pp.Send(msg)
 							if err != nil {
-								chatlog.Error("Could not send to peer", "id", p.ID(), "peer", chatctrl.oaddr, "err", err)
+								chatlog.Error("Could not send to peer", "id", p.ID(), "peer", chatctrl.oAddr, "err", err)
 								pp.Drop(err)
 								return
 							}
