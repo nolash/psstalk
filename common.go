@@ -6,8 +6,14 @@ import (
 
 	termbox "github.com/nsf/termbox-go"
 	"github.com/nolash/psstalk/term"
-	"github.com/ethereum/go-ethereum/p2p/protocols"
-	"github.com/ethereum/go-ethereum/swarm/pss"
+)
+
+const (
+	connOK = iota
+	connDialing
+	connP2pDown
+	connRPCDown
+	connReconn
 )
 
 var (
@@ -27,33 +33,6 @@ var (
 	runeSpace rune = 32
 
 )
-
-var chatProtocol = &protocols.Spec{
-	Name: "psschat",
-	Version: 1,
-	MaxMsgSize: 1024,
-	Messages: []interface{}{
-		chatMsg{}, chatPing{}, chatAck{},
-	},
-}
-
-var chatTopic = pss.NewTopic(chatProtocol.Name, int(chatProtocol.Version))
-
-type chatCtrl struct {
-	inC chan *chatMsg
-	peer *protocols.Peer
-	oAddr []byte
-}
-
-func (self *chatCtrl) chatHandler(msg interface{}) error {
-	chatmsg, ok := msg.(*chatMsg)
-	if ok {
-		if self.inC != nil {
-			self.inC <- chatmsg
-		}
-	}
-	return nil
-}
 
 type Prompt struct {
 	Buffer []rune

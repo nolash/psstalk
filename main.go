@@ -8,10 +8,8 @@ import (
 	"flag"
 	"github.com/nolash/psstalk/term"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/pot"
-	"github.com/ethereum/go-ethereum/p2p/protocols"
-	"github.com/ethereum/go-ethereum/swarm/network"
+	psschat "github.com/ethereum/go-ethereum/swarm/pss/protocols/chat"
 	"github.com/ethereum/go-ethereum/node"
 	pss "github.com/ethereum/go-ethereum/swarm/pss/client"
 	"os"
@@ -57,9 +55,10 @@ func main() {
 	otherC := make(chan []rune) // Others send me a message
 	promptC := make(chan bool) // Keyboard input
 
-	// message channels
-	inC := make(chan *chatMsg) // incoming message
+	// peer channels
+	inC := make(chan *psschat.ChatMsg) // incoming message
 	outC := make(chan interface{}) // outgoing message
+	connC := make(chan psschat.ChatConn) // connection alerts
 
 	// initialize the terminal overlay handler
 	client = term.NewTalkClient(2)
@@ -73,7 +72,7 @@ func main() {
 	// connect to the pss backend
 	// pssclient is a protocol mounted websocket RPC wrapper
 	chatlog.Info("Connecting to pss websocket on %s:%d", pssclienthost, pssclientport)
-	psc, err = connect(ctx, cancel, inC, outC, pssclienthost, pssclientport)
+	psc, err = connect(ctx, cancel, inC, outC, connC, pssclienthost, pssclientport)
 	if err != nil {
 		chatlog.Crit(err.Error())
 		os.Exit(1)
@@ -167,14 +166,14 @@ func main() {
 							b, _ := hex.DecodeString(args[1])
 							potaddr := pot.Address{}
 							copy(potaddr[:], b[:])
-							psc.AddPssPeer(potaddr, chatProtocol)
+							psc.AddPssPeer(potaddr, psschat.ChatProtocol)
 						} else if client.IsSendCmd() && len(client.Sources) == 0 {
 							res = "noone to send to ... add someone first"
 							err = fmt.Errorf("no receivers")
 						} else {
 							if payload != "" {
 								// dispatch message
-								payload := chatMsg{
+								payload := psschat.ChatMsg{
 									Serial:  uint64(client.Buffers[0].Count()),
 									Content: []byte(payload),
 									Source:  randomSrc().Nick,
@@ -234,7 +233,7 @@ func main() {
 	shutdown()
 }
 
-func connect(ctx context.Context, cancel func(), inC chan *chatMsg, outC chan interface{}, host string, port int) (*pss.Client, error) {
+func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, outC chan interface{}, connC chan psschat.ChatConn, host string, port int) (*pss.Client, error) {
 	var err error
 
 	cfg := pss.NewClientConfig()
@@ -245,42 +244,29 @@ func connect(ctx context.Context, cancel func(), inC chan *chatMsg, outC chan in
 	if err != nil {
 		return nil, newError(ePss, err.Error())
 	}
-	err = pssbackend.RunProtocol(newProtocol(inC, outC))
+	err = pssbackend.RunProtocol(psschat.New(inC, connC, newChatInject(outC)))
 	if err != nil {
 		return nil, newError(ePss, err.Error())
 	}
 	return pssbackend, nil
 }
 
-func newProtocol(inC chan *chatMsg, outC chan interface{}) *p2p.Protocol {
-	chatctrl := chatCtrl{
-		inC: inC,
-	}
-	return &p2p.Protocol{
-		Name:    chatProtocol.Name,
-		Version: chatProtocol.Version,
-		Length:  3,
-		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-			peerid := p.ID()
-			chatctrl.oAddr = network.ToOverlayAddr(peerid[:])
-			pp := protocols.NewPeer(p, rw, chatProtocol)
-			if outC != nil {
-				go func() {
-					for {
-						select {
-						case msg := <-outC:
-							err := pp.Send(msg)
-							if err != nil {
-								chatlog.Error("Could not send to peer", "id", p.ID(), "peer", chatctrl.oAddr, "err", err)
-								pp.Drop(err)
-								return
-							}
+func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
+	return func(ctrl *psschat.ChatCtrl) {
+		if outC != nil {
+			go func() {
+				for {
+					select {
+					case msg := <-outC:
+						err := ctrl.Peer.Send(msg)
+						if err != nil {
+							//pp.Drop(err)
+							//break
 						}
 					}
-				}()
-			}
-			pp.Run(chatctrl.chatHandler)
-			return nil
-		},
+				}
+			}()
+		}
 	}
 }
+

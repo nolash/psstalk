@@ -18,7 +18,6 @@ import (
 	termbox "github.com/nsf/termbox-go"
 
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/simulations"
 	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
@@ -29,16 +28,17 @@ import (
 	"github.com/ethereum/go-ethereum/swarm/network"
 	"github.com/ethereum/go-ethereum/swarm/pss"
 	pssclient "github.com/ethereum/go-ethereum/swarm/pss/client"
+	psschat "github.com/ethereum/go-ethereum/swarm/pss/protocols/chat"
 )
 
 var (
-	services = newServices(newTestProtocol)
+	services = newServices(psschat.New)
 	maxRandomLineLength int
 	minRandomLineLength int
 	fakenodeconfigs     []*adapters.NodeConfig
 	fakepots            = make(map[discover.NodeID]pot.Address)
 	outCs               = make(map[discover.NodeID]chan interface{})
-	inCs                = make(map[discover.NodeID]chan *chatMsg)
+	inCs                = make(map[discover.NodeID]chan *psschat.ChatMsg)
 )
 
 
@@ -57,7 +57,7 @@ func init() {
 		addr := network.ToOverlayAddr(fakenodeconfig.ID[:])
 		copy(potaddr[:], addr[:])
 		fakepots[fakenodeconfig.ID] = potaddr
-		inCs[fakenodeconfig.ID] = make(chan *chatMsg)
+		inCs[fakenodeconfig.ID] = make(chan *psschat.ChatMsg)
 		outCs[fakenodeconfig.ID] = make(chan interface{})
 	}
 
@@ -266,18 +266,18 @@ func TestPssReceive(t *testing.T) {
 
 	otherticker := time.NewTicker(time.Millisecond * 500)
 
-	proto := newTestProtocol(pssInC, pssOutC)
+	proto := psschat.New(pssInC, nil, newTestChatInject(pssOutC))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, ps := newPss(t, ctx, cancel, proto, quitPssC)
 
-	err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
+	pss.RegisterPssProtocol(ps, &psschat.ChatTopic, psschat.ChatProtocol, proto)
 	if err != nil {
 		t.Fatalf("pss create fail: %v", err)
 	}
 
 	// set up the message to send
-	code, ok := chatProtocol.GetCode(&chatMsg{})
+	code, ok := psschat.ChatProtocol.GetCode(&psschat.ChatMsg{})
 	if !ok {
 		t.Fatalf("get chatmsg code fail!")
 	}
@@ -286,7 +286,7 @@ func TestPssReceive(t *testing.T) {
 		for run {
 			select {
 			case <-otherticker.C:
-				payload := chatMsg{
+				payload := psschat.ChatMsg{
 					Serial:  uint64(serial),
 					Content: txtreplies[(serial-1)%len(txtreplies)],
 					Source:  "bar",
@@ -296,7 +296,7 @@ func TestPssReceive(t *testing.T) {
 					t.Fatalf("new protocomsg fail: %v", err)
 				}
 
-				env := pss.NewEnvelope(fakepots[fakenodeconfigs[1].ID].Bytes(), chatTopic, pmsg)
+				env := pss.NewEnvelope(fakepots[fakenodeconfigs[1].ID].Bytes(), psschat.ChatTopic, pmsg)
 
 				ps.Process(&pss.PssMsg{
 					To:      fakepots[fakenodeconfigs[0].ID].Bytes(),
@@ -357,14 +357,14 @@ func TestPssSendAndReceive(t *testing.T) {
 
 	prompt.Reset()
 
-	proto := newTestProtocol(pssInC, pssOutC)
+	proto := psschat.New(pssInC, nil, newTestChatInject(pssOutC))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	psc, _ := newPss(t, ctx, cancel, proto, quitPssC)
 
 	copy(potaddr[:], fakepots[fakenodeconfigs[0].ID].Bytes())
 
-	psc.AddPssPeer(potaddr, chatProtocol)
+	psc.AddPssPeer(potaddr, psschat.ChatProtocol)
 
 	go func() {
 		for run {
@@ -459,7 +459,7 @@ func TestPssSendAndReceive(t *testing.T) {
 					}
 
 					// send the message to ourselves using pssclient
-					payload := chatMsg{
+					payload := psschat.ChatMsg{
 						Serial:  uint64(serial),
 						Content: buf.Bytes(),
 						Source:  randomSrc().Nick,
@@ -507,7 +507,6 @@ func TestCur (t *testing.T) {
 		[]byte("42"),
 	}
 
-	addSrc(fmt.Sprintf("%x", fakepots[fakenodeconfigs[0].ID].Bytes()[:8]), "bob", termbox.ColorYellow)
 	addSrc(fmt.Sprintf("%x", fakepots[fakenodeconfigs[1].ID].Bytes()[:8]), "alice", termbox.ColorCyan)
 
 	startup()
@@ -549,7 +548,8 @@ func TestCur (t *testing.T) {
 
 		fakeclients[cfg.ID] = pssclient.NewClientWithRPC(ctx, fakerpc)
 		fakeclients[cfg.ID].Start()
-		fakeclients[cfg.ID].RunProtocol(newTestProtocol(inCs[cfg.ID], outCs[cfg.ID]))
+		//fakeclients[cfg.ID].RunProtocol(newTestProtocol(inCs[cfg.ID], outCs[cfg.ID]))
+		fakeclients[cfg.ID].RunProtocol(psschat.New(inCs[cfg.ID], nil, newTestChatInject(outCs[cfg.ID])))
 
 		peerevents := make(chan *p2p.PeerEvent)
 		peersub, err := fakerpc.Subscribe(ctx, "admin", peerevents, "peerEvents")
@@ -588,8 +588,8 @@ func TestCur (t *testing.T) {
 
 	chatlog.Info("connections are up")
 
-	fakeclients[fakenodeconfigs[0].ID].AddPssPeer(fakepots[fakenodeconfigs[1].ID], chatProtocol)
-	fakeclients[fakenodeconfigs[1].ID].AddPssPeer(fakepots[fakenodeconfigs[0].ID], chatProtocol)
+	fakeclients[fakenodeconfigs[0].ID].AddPssPeer(fakepots[fakenodeconfigs[1].ID], psschat.ChatProtocol)
+	fakeclients[fakenodeconfigs[1].ID].AddPssPeer(fakepots[fakenodeconfigs[0].ID], psschat.ChatProtocol)
 
 	// at this point we are connected in a line
 	// let's start relaying messages
@@ -607,7 +607,7 @@ func TestCur (t *testing.T) {
 							return
 						}
 						time.Sleep(dur)
-						payload := chatMsg{
+						payload := psschat.ChatMsg{
 							Serial:  uint64(serialother),
 							Content: txtreplies[rand.Int() % len(txtreplies)],
 							Source:  fmt.Sprintf("%x", srcpot[:8]),
@@ -708,7 +708,7 @@ func TestCur (t *testing.T) {
 					}
 
 					// send on the outchannel, which writes to the pssclient rw
-					payload := chatMsg{
+					payload := psschat.ChatMsg{
 						Serial:  uint64(serialself),
 						Content: buf.Bytes(),
 						Source:  randomSrc().Nick,
@@ -793,7 +793,7 @@ func getLineLengths() {
 	maxRandomLineLength = int(float64(client.Width) * 2.8)
 }
 
-func newServices(protofunc func(chan *chatMsg, chan interface{}) *p2p.Protocol) adapters.Services {
+func newServices(protofunc func(chan *psschat.ChatMsg, chan psschat.ChatConn, func(*psschat.ChatCtrl)) *p2p.Protocol) adapters.Services {
 	stateStore := adapters.NewSimStateStore()
 	kademlias := make(map[discover.NodeID]*network.Kademlia)
 	kademlia := func(id discover.NodeID) *network.Kademlia {
@@ -825,9 +825,9 @@ func newServices(protofunc func(chan *chatMsg, chan interface{}) *p2p.Protocol) 
 			pssp := pss.NewPssParams(false)
 			ps := pss.NewPss(kademlia(ctx.Config.ID), dpa, pssp)
 
-			proto := protofunc(nil, nil)
+			proto := protofunc(inCs[ctx.Config.ID], nil, newTestChatInject(outCs[ctx.Config.ID]))
 
-			err = pss.RegisterPssProtocol(ps, &chatTopic, chatProtocol, proto)
+			pss.RegisterPssProtocol(ps, &psschat.ChatTopic, psschat.ChatProtocol, proto)
 			if err != nil {
 				chatlog.Error("Couldnt register chat protocol in pss service", "err", err)
 				os.Exit(1)
@@ -849,35 +849,54 @@ func newServices(protofunc func(chan *chatMsg, chan interface{}) *p2p.Protocol) 
 	}
 }
 
-func newTestProtocol(inC chan *chatMsg, outC chan interface{}) *p2p.Protocol {
-	chatctrl := chatCtrl{
-		inC: inC,
-	}
-	return &p2p.Protocol{
-		Name:    chatProtocol.Name,
-		Version: chatProtocol.Version,
-		Length:  3,
-		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-			pp := protocols.NewPeer(p, rw, chatProtocol)
-			if outC != nil {
-				go func() {
-					for {
-						select {
-						case msg := <-outC:
-							err := pp.Send(msg)
-							if err != nil {
-								pp.Drop(err)
-								break
-							}
+func newTestChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
+	return func(ctrl *psschat.ChatCtrl) {
+		if outC != nil {
+			go func() {
+				for {
+					select {
+					case msg := <-outC:
+						err := ctrl.Peer.Send(msg)
+						if err != nil {
+							//pp.Drop(err)
+							//break
 						}
 					}
-				}()
-			}
-			chatctrl.oAddr = fakepots[p.ID()].Bytes()
-			pp.Run(chatctrl.chatHandler)
-			return nil
-		},
+				}
+			}()
+		}
 	}
 }
 
-
+//func newTestProtocol(inC chan *psschat.ChatMsg, outC chan interface{}) *p2p.Protocol {
+//	chatctrl := chatCtrl{
+//		inC: inC,
+//	}
+//	return &p2p.Protocol{
+//		Name:    psschat.ChatProtocol.Name,
+//		Version: psschat.ChatProtocol.Version,
+//		Length:  3,
+//		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+//			pp := protocols.NewPeer(p, rw, psschat.ChatProtocol)
+//			if outC != nil {
+//				go func() {
+//					for {
+//						select {
+//						case msg := <-outC:
+//							err := pp.Send(msg)
+//							if err != nil {
+//								pp.Drop(err)
+//								break
+//							}
+//						}
+//					}
+//				}()
+//			}
+//			chatctrl.oAddr = fakepots[p.ID()].Bytes()
+//			pp.Run(chatctrl.chatHandler)
+//			return nil
+//		},
+//	}
+//}
+//
+//
