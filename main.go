@@ -111,6 +111,11 @@ func main() {
 					}
 					client.Buffers[1].Add(getSrc(chatmsg.Source), rs)
 					otherC <- rs
+				case cerr := <-connC:
+					crune := []rune(cerr.Error())
+					client.Buffers[0].Add(colorSrc["error"], crune)
+					chatlog.Warn("connection error: %v", cerr.Error())
+					meC <- crune
 			}
 		}
 	}()
@@ -160,6 +165,7 @@ func main() {
 				case termbox.KeyEnter:
 					line := prompt.Buffer
 					res, payload, err := client.Process(line)
+					color := colorSrc["error"]
 					if err == nil {
 						if client.IsAddCmd() {
 							args := client.GetCmd()
@@ -167,6 +173,7 @@ func main() {
 							potaddr := pot.Address{}
 							copy(potaddr[:], b[:])
 							psc.AddPssPeer(potaddr, psschat.ChatProtocol)
+							color = colorSrc["success"]
 						} else if client.IsSendCmd() && len(client.Sources) == 0 {
 							res = "noone to send to ... add someone first"
 							err = fmt.Errorf("no receivers")
@@ -180,41 +187,41 @@ func main() {
 								}
 
 								outC <- payload
+
+								// add the line to the history buffer for the local user
+								client.Buffers[0].Add(nil, line)
+								color = colorSrc["success"]
 							}
 
-							// add the line to the history buffer for the local user
-							client.Buffers[0].Add(nil, line)
 						}
-
-						// move the prompt line down
-						// and back up if we hit the bottom of the viewport height
-						prompt.Line += (prompt.Count / client.Width) + 1
-						if prompt.Line > client.Lines[0]-1 {
-							prompt.Line = client.Lines[0] - 1
-						}
-
-						// update the local user viewport
-						meC <- line
-
-						// clear the prompt buffer
-						prompt.Reset()
-
-						// clear the prompt line in the viewport
-						for i := 0; i < client.Width; i++ {
-							termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
-						}
-
-						// update the prompt in the viewport
-						// (do we need this?)
-						promptC <- true
 
 					}
-
 					if len(res) > 0 {
 						resrunes := bytes.Runes([]byte(res))
-						client.Buffers[1].Add(nil, resrunes)
+						client.Buffers[0].Add(color, resrunes)
 						otherC <- resrunes
 					}
+					// move the prompt line down
+					// and back up if we hit the bottom of the viewport height
+					prompt.Line += (prompt.Count / client.Width) + 1
+					if prompt.Line > client.Lines[0]-1 {
+						prompt.Line = client.Lines[0] - 1
+					}
+
+					// update the local user viewport
+					meC <- line
+
+					// clear the prompt buffer
+					prompt.Reset()
+
+					// clear the prompt line in the viewport
+					for i := 0; i < client.Width; i++ {
+						termbox.SetCell(i, prompt.Line, runeSpace, bgAttr, bgAttr)
+					}
+
+					// update the prompt in the viewport
+					// (do we need this?)
+					promptC <- true
 
 				case termbox.KeySpace:
 					addToPrompt(runeSpace, before)
@@ -227,8 +234,6 @@ func main() {
 			}
 		}
 	}
-
-	_ = psc
 
 	shutdown()
 }
@@ -258,8 +263,15 @@ func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
 				for {
 					select {
 					case msg := <-outC:
+						chatlog.Debug("handler received msg on outC", "msg", msg)
 						err := ctrl.Peer.Send(msg)
 						if err != nil {
+							chatlog.Debug("send error: %v", "err", err, "msg", msg)
+							id := ctrl.Peer.ID()
+							ctrl.ConnC <- psschat.ChatConn{
+								Addr: id[:],
+								E: psschat.ESendFail,
+							}
 							//pp.Drop(err)
 							//break
 						}

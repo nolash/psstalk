@@ -157,7 +157,6 @@ func (self *TalkClient) Process(line []rune) (result string, payload string, err
 
 	if self.IsSendCmd() {
 		if  input == "" {
-			fmt.Printf("!!!!!!!!!s!!!!!! testing line '%s' input '%x'", string(line), input)
 			self.ResetCmd()
 			return "incomplete command", "", fmt.Errorf("send command without content")
 		}

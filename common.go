@@ -24,15 +24,24 @@ var (
 	successColor        termbox.Attribute = termbox.ColorGreen
 	failColor           termbox.Attribute = termbox.ColorRed
 	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
-	prompt *Prompt = &Prompt{}
+	colorSrc = map[string]*talk.TalkSource{
+		"error": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
+		"success": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
+	}
+		prompt *Prompt = &Prompt{}
 	client *talk.TalkClient
 	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
 	bgAttr = termbox.ColorBlack
 	bgClearAttr = termbox.ColorBlack
 	runeDash rune = 45
 	runeSpace rune = 32
-
 )
+
+func init() {
+	srcFormat[colorSrc["error"]] = failColor
+	srcFormat[colorSrc["success"]] = successColor
+
+}
 
 type Prompt struct {
 	Buffer []rune
