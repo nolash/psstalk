@@ -5,7 +5,7 @@ import (
 	"math/rand"
 
 	termbox "github.com/nsf/termbox-go"
-	"github.com/nolash/psstalk/term"
+	"github.com/nolash/psstalk/talk"
 )
 
 const (
@@ -23,9 +23,9 @@ var (
 	pendingColor        termbox.Attribute = termbox.ColorDefault
 	successColor        termbox.Attribute = termbox.ColorGreen
 	failColor           termbox.Attribute = termbox.ColorRed
-	srcFormat = make(map[*term.TalkSource]termbox.Attribute)
+	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
 	prompt *Prompt = &Prompt{}
-	client *term.TalkClient
+	client *talk.TalkClient
 	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
 	bgAttr = termbox.ColorBlack
 	bgClearAttr = termbox.ColorBlack
@@ -57,7 +57,7 @@ func (self *Prompt) Remove() {
 
 // add a chat source (peer)
 func addSrc(label string, nick string, format termbox.Attribute) error {
-	src := &term.TalkSource{
+	src := &talk.TalkSource{
 		Nick: nick,
 	}
 	client.Sources[label] = src
@@ -66,13 +66,13 @@ func addSrc(label string, nick string, format termbox.Attribute) error {
 }
 
 // get a source from key
-func getSrc(label string) *term.TalkSource {
+func getSrc(label string) *talk.TalkSource {
 	return client.Sources[label]
 }
 
 // get a random source
-func randomSrc() *term.TalkSource {
-	emptysrc := &term.TalkSource{
+func randomSrc() *talk.TalkSource {
+	emptysrc := &talk.TalkSource{
 		Nick: "noone",
 	}
 	if len(client.Sources) == 0 {
@@ -114,7 +114,7 @@ func shutdown() {
 
 // startline: termbox line to start refresh from
 // viewportheight: height of termbox viewport for buffer
-func updateView(buf *term.TalkBuffer, startline int, viewportheight int) {
+func updateView(buf *talk.TalkBuffer, startline int, viewportheight int) {
 	var skip int
 	lines := 0
 	bufline, skip := getStartPosition(buf.Buffer, viewportheight)
@@ -141,7 +141,7 @@ func updateView(buf *term.TalkBuffer, startline int, viewportheight int) {
 
 // work lines (buffer entries) backwards from end of buffer till viewport height threshold is reached 
 // within the line, find the cell index of the row thats on the threshold
-func getStartPosition(buf []term.TalkEntry, viewportheight int) (bufstartline int, bufstartidx int) { 
+func getStartPosition(buf []talk.TalkEntry, viewportheight int) (bufstartline int, bufstartidx int) { 
 	lines := 0
 	for bufstartline = len(buf); bufstartline > 0; bufstartline-- {
 		currentlines := lineRows(buf[bufstartline - 1].Content)

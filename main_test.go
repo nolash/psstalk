@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nolash/psstalk/term"
+	"github.com/nolash/psstalk/talk"
 	termbox "github.com/nsf/termbox-go"
 
 	"github.com/ethereum/go-ethereum/p2p"
@@ -47,7 +47,7 @@ var (
 func init() {
 	var i int
 
-	client = term.NewTalkClient(2)
+	client = talk.NewTalkClient(2)
 		for i = 0; i < 3; i++ {
 		var potaddr pot.Address
 		fakenodeconfig := adapters.RandomNodeConfig()

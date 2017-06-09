@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"context"
 	"flag"
-	"github.com/nolash/psstalk/term"
+	"github.com/nolash/psstalk/talk"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/pot"
 	psschat "github.com/ethereum/go-ethereum/swarm/pss/protocols/chat"
@@ -61,7 +61,7 @@ func main() {
 	connC := make(chan psschat.ChatConn) // connection alerts
 
 	// initialize the terminal overlay handler
-	client = term.NewTalkClient(2)
+	client = talk.NewTalkClient(2)
 
 	// prompt buffers user input
 	prompt.Reset()
