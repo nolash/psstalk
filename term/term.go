@@ -13,15 +13,18 @@ const (
 
 var (
 	cmdAll = uint32(1)
-	cmdAdd = uint32(2)
-	cmdMsg = uint32(4)
+	cmdAdd = uint32(1 << 1)
+	cmdDel = uint32(1 << 2)
+	cmdMsg = uint32(1 << 8)
 	cmdDone = uint32(0x80000000)
 	cmdDefault = cmdAll
 )
 
+type TalkAddress []byte
+
 type TalkSource struct {
 	Nick string
-	Addr []byte
+	Addr TalkAddress
 }
 
 type TalkEntry struct {
@@ -111,6 +114,7 @@ func (self *TalkClient) Process(line []rune) (result string, payload string, err
 	var c int
 	processed := false
 	input := string(line)
+	self.ResetCmd()
 
 	// short circuit if no command
 	if strings.Index(input, "/") != 0 {
@@ -151,6 +155,14 @@ func (self *TalkClient) Process(line []rune) (result string, payload string, err
 		return "incomplete command", "", fmt.Errorf("%v", input)
 	}
 
+	if self.IsSendCmd() {
+		if  input == "" {
+			fmt.Printf("!!!!!!!!!s!!!!!! testing line '%s' input '%x'", string(line), input)
+			self.ResetCmd()
+			return "incomplete command", "", fmt.Errorf("send command without content")
+		}
+	}
+
 	return result, input, nil
 }
 
@@ -186,22 +198,24 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 
 	switch self.action {
 		case cmdAdd:
+			var src *TalkSource
 			self.arguments = append(self.arguments, cmd)
 			if len(self.arguments) == 2 {
-				addr, err := hex.DecodeString(self.arguments[1])
+				if self.Sources[self.arguments[0]] != nil {
+					self.ResetCmd()
+					return false, result, fmt.Errorf("handle already in use")
+				}
+				addr, err := StringToAddress(cmd)
 				if err != nil {
 					self.ResetCmd()
-					return false, result, fmt.Errorf("cannot parse address to add")
+					return false, result, err
 				}
-
-				for _, src := range self.Sources {
-					fmt.Printf("checking %v %v\n", addr, src.Addr)
-					if bytes.Equal(addr, src.Addr) {
-						self.ResetCmd()
-						return false, result, fmt.Errorf("address already added")
-					}
+				src = self.getSourceByAddress(addr)
+				if src != nil {
+					self.ResetCmd()
+					return false, result, fmt.Errorf("address already added")
 				}
-				src := &TalkSource{
+				src = &TalkSource{
 					Nick: self.arguments[0],
 					Addr: addr,
 				}
@@ -210,10 +224,47 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 				result = fmt.Sprintf("ok added %x as '%s'", src.Addr, src.Nick)
 				self.action |= cmdDone
 			}
+		case cmdMsg:
+			var src *TalkSource
+			self.arguments = append(self.arguments, cmd)
+			if src = self.Sources[cmd]; src == nil {
+				if src = self.getSourceByNick(cmd); src == nil {
+					addr, err := StringToAddress(cmd)
+					if err != nil {
+						self.ResetCmd()
+						return false, result, err
+					}
+					if self.getSourceByAddress(addr) == nil {
+						self.ResetCmd()
+						return false, result, fmt.Errorf("no recipient by that name or address")
+					}
+				} else {
+					cmd = AddressToString(src.Addr)
+				}
+			} else {
+				cmd = AddressToString(src.Addr)
+			}
+			self.arguments[0] = cmd
+			self.action |= cmdDone
+
+		case cmdDel:
+			var src *TalkSource
+			if src = self.Sources[cmd]; src == nil {
+				self.ResetCmd()
+				return false, result, fmt.Errorf("no handle by that name")
+			}
+			delete(self.Sources, cmd)
+			self.action |= cmdDone
 		default:
 			switch cmd {
 				case "add":
 					self.action = cmdAdd
+				case "msg":
+					self.action = cmdMsg
+				case "del":
+					self.action = cmdDel
+				case "rm":
+					self.action = cmdDel
 				default:
 					return false, result, fmt.Errorf("unknown command")
 			}
@@ -223,6 +274,46 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 	}
 	return false, result, nil
 }
+
+func AddressToString(addr TalkAddress) string {
+	return bytes.NewBuffer(addr).String()
+}
+
+func StringToAddress(straddr string) (TalkAddress, error) {
+	addr, err := hex.DecodeString(straddr)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse address to add")
+	}
+	return addr, nil
+}
+
+func (self *TalkClient) getSourceKey(src *TalkSource) string {
+	for k, v := range self.Sources {
+		if v == src {
+			return k
+		}
+	}
+	return ""
+}
+
+func (self *TalkClient) getSourceByNick(nick string) *TalkSource {
+	for _, src := range self.Sources {
+		if src.Nick == nick {
+			return src
+		}
+	}
+	return nil
+}
+
+func (self *TalkClient) getSourceByAddress(addr TalkAddress) *TalkSource {
+	for _, src := range self.Sources {
+		if bytes.Equal(addr, src.Addr) {
+			return src
+		}
+	}
+	return nil
+}
+
 
 // little endian packing for transport
 //func packRunes(line []rune) []byte {
