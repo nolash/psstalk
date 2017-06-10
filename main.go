@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	pss "github.com/ethereum/go-ethereum/swarm/pss/client"
 	"os"
+	"time"
 
 	termbox "github.com/nsf/termbox-go"
 )
@@ -40,6 +41,7 @@ func init() {
 
 	flag.StringVar(&pssclienthost, "h", "localhost", "pss websocket hostname")
 	flag.IntVar(&pssclientport, "p", node.DefaultWSPort, "pss websocket port")
+	flag.Parse()
 }
 
 func main() {
@@ -58,7 +60,9 @@ func main() {
 	// peer channels
 	inC := make(chan *psschat.ChatMsg) // incoming message
 	outC := make(chan interface{}) // outgoing message
-	connC := make(chan psschat.ChatConn) // connection alerts
+	connC := make(chan *psschat.ChatConn) // connection alerts
+	tmpC := make(chan *psschat.ChatMsg) // temporary message channel to update ping map to discoveryid
+	pingC := make(chan *psschat.ChatConn) // incoming ping
 
 	// initialize the terminal overlay handler
 	client = talk.NewTalkClient(2)
@@ -69,10 +73,11 @@ func main() {
 	// use context for simple teardown
 	ctx, cancel = context.WithCancel(context.Background())
 
+
 	// connect to the pss backend
 	// pssclient is a protocol mounted websocket RPC wrapper
-	chatlog.Info("Connecting to pss websocket on %s:%d", pssclienthost, pssclientport)
-	psc, err = connect(ctx, cancel, inC, outC, connC, pssclienthost, pssclientport)
+	chatlog.Info("Connecting to pss websocket", "host", pssclienthost, "port", pssclientport)
+	psc, err = connect(ctx, cancel, inC, tmpC, outC, connC, pingC, pssclienthost, pssclientport)
 	if err != nil {
 		chatlog.Crit(err.Error())
 		os.Exit(1)
@@ -89,7 +94,7 @@ func main() {
 	go func() {
 		for run {
 			select {
-				case chatmsg := <-inC:
+				case chatmsg := <-tmpC:
 					var rs []rune
 					var buf *bytes.Buffer
 					buf = bytes.NewBuffer(chatmsg.Content)
@@ -232,7 +237,7 @@ func main() {
 	shutdown()
 }
 
-func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, outC chan interface{}, connC chan psschat.ChatConn, host string, port int) (*pss.Client, error) {
+func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, tmpC chan *psschat.ChatMsg, outC chan interface{}, connC chan *psschat.ChatConn, pingC chan *psschat.ChatConn, host string, port int) (*pss.Client, error) {
 	var err error
 
 	cfg := pss.NewClientConfig()
@@ -243,14 +248,14 @@ func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, outC
 	if err != nil {
 		return nil, newError(ePss, err.Error())
 	}
-	err = pssbackend.RunProtocol(psschat.New(inC, connC, newChatInject(outC)))
+	err = pssbackend.RunProtocol(psschat.New(inC, connC, pingC, newChatInject(tmpC, outC)))
 	if err != nil {
 		return nil, newError(ePss, err.Error())
 	}
 	return pssbackend, nil
 }
 
-func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
+func newChatInject(tmpC chan *psschat.ChatMsg, outC chan interface{}) func (*psschat.ChatCtrl) {
 	return func(ctrl *psschat.ChatCtrl) {
 		if outC != nil {
 			go func() {
@@ -260,7 +265,7 @@ func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
 						err := ctrl.Peer.Send(msg)
 						if err != nil {
 							id := ctrl.Peer.ID()
-							ctrl.ConnC <- psschat.ChatConn{
+							ctrl.ConnC <- &psschat.ChatConn{
 								Addr: id[:],
 								E: psschat.ESendFail,
 								Detail: err,
@@ -270,6 +275,24 @@ func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
 				}
 			}()
 		}
+		go func() {
+			checknext := time.NewTimer(pinginterval)
+			for {
+				select {
+					case <-checknext.C:
+						chatlog.Debug("sending ping", "peer", ctrl.Peer)
+						ctrl.Peer.Send(&psschat.ChatPing{})
+					case chatmsg := <-ctrl.InC:
+						chatlog.Debug("incoming msg", "peer", ctrl.Peer, "msg", chatmsg)
+						tmpC <- chatmsg
+						tmppingtracker[ctrl.Peer] = time.Now()
+					case <-ctrl.PingC:
+						chatlog.Debug("got ping", "peer", ctrl.Peer)
+						tmppingtracker[ctrl.Peer] = time.Now()
+				}
+				checknext.Reset(pinginterval)
+			}
+		}()
 	}
 }
 

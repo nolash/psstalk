@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -25,11 +26,13 @@ type TalkAddress []byte
 type TalkSource struct {
 	Nick string
 	Addr TalkAddress
+	Seen time.Time
 }
 
 type TalkEntry struct {
 	Source *TalkSource
 	Content []rune
+	Id int // enables matching of line to message serial (or other desired id) after merge in viewport buffer
 }
 
 func (self *TalkEntry) Runes(sep string) (rb []rune) {

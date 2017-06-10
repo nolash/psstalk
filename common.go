@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"time"
 
 	termbox "github.com/nsf/termbox-go"
 	"github.com/nolash/psstalk/talk"
+	"github.com/ethereum/go-ethereum/p2p/protocols"
 )
 
 const (
@@ -35,6 +37,8 @@ var (
 	bgClearAttr = termbox.ColorBlack
 	runeDash rune = 45
 	runeSpace rune = 32
+	tmppingtracker = make(map[*protocols.Peer]time.Time) // last seen activity
+	pinginterval = time.Second * 3
 )
 
 func init() {
