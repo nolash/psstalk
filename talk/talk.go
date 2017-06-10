@@ -34,22 +34,22 @@ type TalkEntry struct {
 
 func (self *TalkEntry) Runes(sep string) (rb []rune) {
 
-	source := ""
 	if self.Source != nil {
-	//if false {
-		source = self.Source.Nick
-		if sep == "" {
-			sep = ": "
-		}
-		source += sep
-
-		buf := bytes.NewBufferString(source)
-		for {
-			r, s, err := buf.ReadRune()
-			if err != nil || s == 0 {
-				break
+		source := self.Source.Nick
+		if source[0] != 0x00 {
+			if sep == "" {
+				sep = ": "
 			}
-			rb = append(rb, r)
+			source += sep
+
+			buf := bytes.NewBufferString(source)
+			for {
+				r, s, err := buf.ReadRune()
+				if err != nil || s == 0 {
+					break
+				}
+				rb = append(rb, r)
+			}
 		}
 	}
 

@@ -233,7 +233,7 @@ func updatePromptView() {
 	}
 
 	// clear remaining lines
-	if i%client.Width > 0 {
+	if i % client.Width > 0 || i == 0 {
 		for ; i < client.Width; i++ {
 			termbox.SetCell(i%client.Width, prompt.Line+(i/client.Width), runeSpace, bgAttr, bgAttr)
 		}

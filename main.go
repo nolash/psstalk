@@ -92,15 +92,6 @@ func main() {
 				case chatmsg := <-inC:
 					var rs []rune
 					var buf *bytes.Buffer
-//					buf = bytes.NewBufferString(fmt.Sprintf("%d=", chatmsg.Serial))
-//					for {
-//						r, n, err := buf.ReadRune()
-//						if err != nil || n == 0 {
-//							break
-//						}
-//						rs = append(rs, r)
-//					}
-
 					buf = bytes.NewBuffer(chatmsg.Content)
 					for {
 						r, n, err := buf.ReadRune()
@@ -112,9 +103,9 @@ func main() {
 					client.Buffers[1].Add(getSrc(chatmsg.Source), rs)
 					otherC <- rs
 				case cerr := <-connC:
-					crune := []rune(cerr.Error())
+					crune := []rune(fmt.Sprintf("%s: %s", cerr.Error(), cerr.Detail))
+					prompt.Line += (len(crune) / client.Width) + 1
 					client.Buffers[0].Add(colorSrc["error"], crune)
-					chatlog.Warn("connection error: %v", cerr.Error())
 					meC <- crune
 			}
 		}
@@ -163,6 +154,9 @@ func main() {
 					promptC <- true
 				// enter sends the message
 				case termbox.KeyEnter:
+					if len(prompt.Buffer) == 0 {
+						break
+					}
 					line := prompt.Buffer
 					res, payload, err := client.Process(line)
 					color := colorSrc["error"]
@@ -263,17 +257,14 @@ func newChatInject(outC chan interface{}) func (*psschat.ChatCtrl) {
 				for {
 					select {
 					case msg := <-outC:
-						chatlog.Debug("handler received msg on outC", "msg", msg)
 						err := ctrl.Peer.Send(msg)
 						if err != nil {
-							chatlog.Debug("send error: %v", "err", err, "msg", msg)
 							id := ctrl.Peer.ID()
 							ctrl.ConnC <- psschat.ChatConn{
 								Addr: id[:],
 								E: psschat.ESendFail,
+								Detail: err,
 							}
-							//pp.Drop(err)
-							//break
 						}
 					}
 				}
