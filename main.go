@@ -22,6 +22,7 @@ import (
 var (
 	pssclienthost string
 	pssclientport int
+	pssdebug bool
 )
 
 var (
@@ -41,6 +42,7 @@ func init() {
 
 	flag.StringVar(&pssclienthost, "h", "localhost", "pss websocket hostname")
 	flag.IntVar(&pssclientport, "p", node.DefaultWSPort, "pss websocket port")
+	flag.BoolVar(&pssdebug, "d", false, "output ping and ack")
 	flag.Parse()
 }
 
@@ -58,10 +60,10 @@ func main() {
 	promptC := make(chan bool) // Keyboard input
 
 	// peer channels
-	inC := make(chan *psschat.ChatMsg) // incoming message
+	inC := make(chan interface{}) // incoming message
 	outC := make(chan interface{}) // outgoing message
 	connC := make(chan *psschat.ChatConn) // connection alerts
-	tmpC := make(chan *psschat.ChatMsg) // temporary message channel to update ping map to discoveryid
+	tmpC := make(chan interface{}) // temporary message channel to update ping map to discoveryid
 	pingC := make(chan *psschat.ChatConn) // incoming ping
 
 	// initialize the terminal overlay handler
@@ -94,30 +96,43 @@ func main() {
 	go func() {
 		for run {
 			select {
-				case chatmsg := <-tmpC:
+				case msg := <-tmpC:
+					var chatsrc *talk.TalkSource
 					var rs []rune
-					var buf *bytes.Buffer
-					buf = bytes.NewBuffer(chatmsg.Content)
-					for {
-						r, n, err := buf.ReadRune()
-						if err != nil || n == 0 {
+					chatmsg, ok := msg.(*psschat.ChatMsg)
+					if ok {
+						rs = bytes.Runes([]byte(chatmsg.Content))
+						chatsrc = getSrc(chatmsg.Source)
+					} else {
+						chatack, ok := msg.(*psschat.ChatAck)
+						if ok && pssdebug {
+							rs = []rune(fmt.Sprintf("got ack for msg %d", chatack.Serial))
+							chatsrc = colorSrc["notify"]
+						} else {
 							break
 						}
-						rs = append(rs, r)
 					}
-					client.Buffers[1].Add(getSrc(chatmsg.Source), rs)
+					client.Buffers[1].Add(chatsrc, rs)
 					otherC <- rs
 				case cerr := <-connC:
-					crune := []rune(fmt.Sprintf("%s: %s", cerr.Error(), cerr.Detail))
-					prompt.Line += (len(crune) / client.Width) + 1
-					client.Buffers[0].Add(colorSrc["error"], crune)
-					meC <- crune
+					var rs []rune
+					if cerr.E == psschat.EPing {
+						if !pssdebug {
+							break
+						}
+						rs = []rune(fmt.Sprintf("got ping from %x", cerr.Addr[:8]))
+					} else {
+						rs = []rune(fmt.Sprintf("%s: %s", cerr.Error(), cerr.Detail))
+					}
+					client.Buffers[1].Add(colorSrc["error"], rs)
+					otherC <- rs
 			}
 		}
 	}()
 
 	// update terminal screen loop
 	go func() {
+
 		for run {
 			select {
 			case <-meC:
@@ -179,9 +194,11 @@ func main() {
 						} else {
 							if payload != "" {
 								// dispatch message
+								serial++
 								payload := psschat.ChatMsg{
-									Serial:  uint64(client.Buffers[0].Count()),
-									Content: []byte(payload),
+									Serial:  uint64(serial),
+									//Content: []byte(payload),
+									Content: payload,
 									Source:  randomSrc().Nick,
 								}
 
@@ -237,7 +254,7 @@ func main() {
 	shutdown()
 }
 
-func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, tmpC chan *psschat.ChatMsg, outC chan interface{}, connC chan *psschat.ChatConn, pingC chan *psschat.ChatConn, host string, port int) (*pss.Client, error) {
+func connect(ctx context.Context, cancel func(), inC chan interface{}, tmpC chan interface{}, outC chan interface{}, connC chan *psschat.ChatConn, pingC chan *psschat.ChatConn, host string, port int) (*pss.Client, error) {
 	var err error
 
 	cfg := pss.NewClientConfig()
@@ -255,7 +272,7 @@ func connect(ctx context.Context, cancel func(), inC chan *psschat.ChatMsg, tmpC
 	return pssbackend, nil
 }
 
-func newChatInject(tmpC chan *psschat.ChatMsg, outC chan interface{}) func (*psschat.ChatCtrl) {
+func newChatInject(tmpC chan interface{}, outC chan interface{}) func (*psschat.ChatCtrl) {
 	return func(ctrl *psschat.ChatCtrl) {
 		if outC != nil {
 			go func() {

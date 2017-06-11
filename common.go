@@ -23,12 +23,14 @@ var (
 	bzzServiceName                        = "bzz"
 	unsentColor         termbox.Attribute = termbox.ColorWhite
 	pendingColor        termbox.Attribute = termbox.ColorDefault
+	notifyColor	termbox.Attribute = termbox.ColorYellow
 	successColor        termbox.Attribute = termbox.ColorGreen
 	failColor           termbox.Attribute = termbox.ColorRed
 	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
 	colorSrc = map[string]*talk.TalkSource{
 		"error": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
-		"success": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
+		"success": &talk.TalkSource{Nick:string([]byte{0x00, 0x02})},
+		"notify": &talk.TalkSource{Nick:string([]byte{0x00, 0x03})},
 	}
 		prompt *Prompt = &Prompt{}
 	client *talk.TalkClient
@@ -39,12 +41,13 @@ var (
 	runeSpace rune = 32
 	tmppingtracker = make(map[*protocols.Peer]time.Time) // last seen activity
 	pinginterval = time.Second * 3
+	serial = 0
 )
 
 func init() {
 	srcFormat[colorSrc["error"]] = failColor
 	srcFormat[colorSrc["success"]] = successColor
-
+	srcFormat[colorSrc["notify"]] = notifyColor
 }
 
 type Prompt struct {
@@ -115,7 +118,7 @@ func startup() error {
 	}
 	updateSize()
 	for i := 0; i < client.Width; i++ {
-		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorYellow, termbox.ColorBlack)
+		termbox.SetCell(i, client.Lines[0], runeDash, termbox.ColorDefault, termbox.ColorBlack)
 	}
 	termbox.Flush()
 	return nil
