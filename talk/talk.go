@@ -212,7 +212,7 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 					self.ResetCmd()
 					return false, result, err
 				}
-				src = self.getSourceByAddress(addr)
+				src = self.GetSourceByAddress(addr)
 				if src != nil {
 					self.ResetCmd()
 					return false, result, fmt.Errorf("address already added")
@@ -236,7 +236,7 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 						self.ResetCmd()
 						return false, result, err
 					}
-					if self.getSourceByAddress(addr) == nil {
+					if self.GetSourceByAddress(addr) == nil {
 						self.ResetCmd()
 						return false, result, fmt.Errorf("no recipient by that name or address")
 					}
@@ -289,6 +289,15 @@ func StringToAddress(straddr string) (TalkAddress, error) {
 	return addr, nil
 }
 
+func (self *TalkClient) GetSourceByAddress(addr TalkAddress) *TalkSource {
+	for _, src := range self.Sources {
+		if bytes.Equal(addr, src.Addr) {
+			return src
+		}
+	}
+	return nil
+}
+
 func (self *TalkClient) getSourceKey(src *TalkSource) string {
 	for k, v := range self.Sources {
 		if v == src {
@@ -307,14 +316,6 @@ func (self *TalkClient) getSourceByNick(nick string) *TalkSource {
 	return nil
 }
 
-func (self *TalkClient) getSourceByAddress(addr TalkAddress) *TalkSource {
-	for _, src := range self.Sources {
-		if bytes.Equal(addr, src.Addr) {
-			return src
-		}
-	}
-	return nil
-}
 
 
 // little endian packing for transport

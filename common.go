@@ -26,13 +26,18 @@ var (
 	notifyColor	termbox.Attribute = termbox.ColorYellow
 	successColor        termbox.Attribute = termbox.ColorGreen
 	failColor           termbox.Attribute = termbox.ColorRed
+	unknownColor	termbox.Attribute = termbox.ColorCyan
 	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
 	colorSrc = map[string]*talk.TalkSource{
 		"error": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
 		"success": &talk.TalkSource{Nick:string([]byte{0x00, 0x02})},
 		"notify": &talk.TalkSource{Nick:string([]byte{0x00, 0x03})},
 	}
-		prompt *Prompt = &Prompt{}
+	unknownSrc = &talk.TalkSource{
+		Nick: "?!?",
+	}
+
+	prompt *Prompt = &Prompt{}
 	client *talk.TalkClient
 	myFormat termbox.Attribute = termbox.AttrBold | termbox.ColorRed
 	bgAttr = termbox.ColorBlack
@@ -48,6 +53,12 @@ func init() {
 	srcFormat[colorSrc["error"]] = failColor
 	srcFormat[colorSrc["success"]] = successColor
 	srcFormat[colorSrc["notify"]] = notifyColor
+	srcFormat[unknownSrc] = unknownColor
+}
+
+type incomingMsg struct {
+	msg interface{}
+	addr []byte
 }
 
 type Prompt struct {
@@ -82,9 +93,10 @@ func addSrc(label string, nick string, format termbox.Attribute) error {
 }
 
 // get a source from key
-func getSrc(label string) *talk.TalkSource {
-	return client.Sources[label]
-}
+//func getSrc(label string) *talk.TalkSource {
+//	return client.Sources[label]
+//}
+//
 
 // get a random source
 func randomSrc() *talk.TalkSource {
