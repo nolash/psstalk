@@ -69,15 +69,15 @@ func (c* ChatConn) Error() string {
 type ChatCtrl struct {
 	Peer *protocols.Peer
 	PeerOAddr []byte
-	OutC chan interface{}
 	ConnC chan *ChatConn
 	InC chan interface{}
 	OAddr []byte
 
 	nick string
-	pingTX int
-	pingRX int
-	pingLast int
+	//pingTX int
+	//pingRX int
+	//pingLast int
+	injectfunc func(*ChatCtrl)
 }
 
 func (self *ChatCtrl) chatHandler(msg interface{}) error {
@@ -130,6 +130,7 @@ func (self *ChatCtrl) chatHandler(msg interface{}) error {
 			E: EHandshake,
 			Detail: chaths.Nick,
 		}
+		self.injectfunc(self)
 		return nil
 	}
 
@@ -141,6 +142,7 @@ func New(oaddr []byte, nick string, inC chan interface{}, connC chan *ChatConn, 
 		InC: inC,
 		ConnC: connC,
 		OAddr: oaddr,
+		injectfunc: injectfunc,
 	}
 
 	if nick == "" {
@@ -156,7 +158,7 @@ func New(oaddr []byte, nick string, inC chan interface{}, connC chan *ChatConn, 
 		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 			pp := protocols.NewPeer(p, rw, ChatProtocol)
 			chatctrl.Peer = pp
-			injectfunc(chatctrl)
+			//injectfunc(chatctrl)
 			go func() {
 				time.Sleep(time.Microsecond * 100)
 				err := pp.Send(&ChatHandshake{

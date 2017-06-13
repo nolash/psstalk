@@ -64,10 +64,10 @@ func main() {
 	promptC := make(chan bool) // Keyboard input
 
 	// peer channels
-	inC := make(chan interface{}) // incoming message
-	outC := make(chan interface{}) // outgoing message
-	connC := make(chan *chat.ChatConn) // connection alerts
-	tmpC := make(chan *incomingMsg) // temporary message channel to update ping map to discoveryid
+	inC := make(chan interface{}, msgChanBuf) // incoming message
+	outC := make(map[pot.Address]chan interface{})
+	connC := make(chan *chat.ChatConn, msgChanBuf) // connection alerts
+	tmpC := make(chan *incomingMsg, msgChanBuf) // temporary message channel to update ping map to discoveryid
 
 	// initialize the terminal overlay handler
 	client = talk.NewTalkClient(2)
@@ -140,7 +140,6 @@ func main() {
 							chatlog.Error("invalid address in handshake", "addr", cerr.Addr)
 						}
 						chatlog.Debug("checking source for addr", "addr", addr, "orig", cerr.Addr)
-
 						src := client.GetSourceByAddress(addr)
 						if src == nil {
 							_, _, err := client.Process([]rune(fmt.Sprintf("/add %s %x", cerr.Detail, cerr.Addr)))
@@ -148,11 +147,12 @@ func main() {
 								chatlog.Error("internal error in adding peer to talk client", "err", err)
 							}
 							rs = []rune(fmt.Sprintf("new contact %s connected. Yay :)", cerr.Detail))
-						} else if src.Nick != cerr.Detail {
-							rs = []rune(fmt.Sprintf("%s connected and is now known as %s!", src.Nick, cerr.Detail))
-							src.Nick = cerr.Detail
+						} else if src.Seen.IsZero() {
+							src.RemoteNick = cerr.Detail
+							rs = []rune(fmt.Sprintf("%s connected", src.LocalNick))
 						} else {
-							rs = []rune(fmt.Sprintf("%s reconnected!", cerr.Detail))
+							src.RemoteNick = cerr.Detail
+							rs = []rune(fmt.Sprintf("%s reconnected!", src.LocalNick))
 						}
 
 						colorsrc = colorSrc["success"]
@@ -216,7 +216,8 @@ func main() {
 					line := prompt.Buffer
 					res, payload, err := client.Process(line)
 					color := colorSrc["error"]
-					if err == nil { if (client.IsSelfCmd()) {
+					if err == nil {
+						if (client.IsSelfCmd()) {
 							color = colorSrc["success"]
 							client.Buffers[0].Add(color, []rune(fmt.Sprintf("%x", psc.BaseAddr)))
 						} else if client.IsAddCmd() {
@@ -235,16 +236,35 @@ func main() {
 								serial++
 								payload := chat.ChatMsg{
 									Serial:  uint64(serial),
-									//Content: []byte(payload),
 									Content: payload,
-									Source:  randomSrc().Nick,
+									Source:  randomSrc().LocalNick,
 								}
 
-								outC <- payload
+
+								if client.IsMsgCmd() {
+									src := client.GetSourceByNick(client.GetCmd()[0])
+									if src != nil {
+
+										chatlog.Trace("send to priv", "src", src.LocalNick)
+										var potaddr pot.Address
+										copy(potaddr[:], src.Addr[:])
+										outC[potaddr] <- payload
+									}
+								} else {
+									chatlog.Trace("send to all")
+									for _, src := range client.Sources {
+										var potaddr pot.Address
+										copy(potaddr[:], src.Addr[:])
+
+										chatlog.Trace("in src", "nick", src.LocalNick, "potaddr", potaddr, "chan", outC[potaddr])
+										outC[potaddr] <- payload
+									}
+								}
 
 								// add the line to the history buffer for the local user
 								client.Buffers[0].Add(nil, line)
 								color = colorSrc["success"]
+
 							}
 
 						}
@@ -292,7 +312,7 @@ func main() {
 	shutdown()
 }
 
-func connect(ctx context.Context, cancel func(), nick string, inC chan interface{}, tmpC chan *incomingMsg, outC chan interface{}, connC chan *chat.ChatConn, host string, port int) (*pss.Client, error) {
+func connect(ctx context.Context, cancel func(), nick string, inC chan interface{}, tmpC chan *incomingMsg, outC map[pot.Address]chan interface{}, connC chan *chat.ChatConn, host string, port int) (*pss.Client, error) {
 	var err error
 
 	cfg := pss.NewClientConfig()
@@ -315,26 +335,28 @@ func connect(ctx context.Context, cancel func(), nick string, inC chan interface
 	return pssbackend, nil
 }
 
-func newChatInject(tmpC chan *incomingMsg, outC chan interface{}) func (*chat.ChatCtrl) {
+func newChatInject(tmpC chan *incomingMsg, outC map[pot.Address]chan interface{}) func (*chat.ChatCtrl) {
 	return func(ctrl *chat.ChatCtrl) {
-		if outC != nil {
-			go func() {
-				for {
-					select {
-					case msg := <-outC:
-						err := ctrl.Peer.Send(msg)
-						if err != nil {
-							id := ctrl.Peer.ID()
-							ctrl.ConnC <- &chat.ChatConn{
-								Addr: id[:],
-								E: chat.ESendFail,
-								Detail: err.Error(),
-							}
+		var potaddr pot.Address
+		copy(potaddr[:], ctrl.PeerOAddr)
+		outC[potaddr] = make(chan interface{}, msgChanBuf)
+		chatlog.Trace("inject ch", "potaddr", potaddr, "ch", outC[potaddr])
+		go func() {
+			for {
+				select {
+				case msg := <-outC[potaddr]:
+					err := ctrl.Peer.Send(msg)
+					if err != nil {
+						id := ctrl.Peer.ID()
+						ctrl.ConnC <- &chat.ChatConn{
+							Addr: id[:],
+							E: chat.ESendFail,
+							Detail: err.Error(),
 						}
 					}
 				}
-			}()
-		}
+			}
+		}()
 		go func() {
 			checknext := time.NewTimer(pinginterval)
 			for {

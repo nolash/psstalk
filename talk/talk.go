@@ -25,7 +25,8 @@ var (
 type TalkAddress []byte
 
 type TalkSource struct {
-	Nick string
+	RemoteNick string
+	LocalNick string
 	Addr TalkAddress
 	Seen time.Time
 }
@@ -39,7 +40,7 @@ type TalkEntry struct {
 func (self *TalkEntry) Runes(sep string) (rb []rune) {
 
 	if self.Source != nil {
-		source := self.Source.Nick
+		source := self.Source.LocalNick
 		if source[0] != 0x00 {
 			if sep == "" {
 				sep = ": "
@@ -177,6 +178,10 @@ func (self *TalkClient) IsSendCmd() bool {
 	return self.action & (cmdMsg | cmdAll) > 0
 }
 
+func (self *TalkClient) IsMsgCmd() bool {
+	return self.action & cmdMsg > 0
+}
+
 func (self *TalkClient) IsAddCmd() bool {
 	return self.action & cmdAdd > 0
 }
@@ -223,19 +228,20 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 					return false, result, fmt.Errorf("address already added")
 				}
 				src = &TalkSource{
-					Nick: self.arguments[0],
+					LocalNick: self.arguments[0],
+					RemoteNick: self.arguments[0],
 					Addr: addr,
 				}
 
 				self.Sources[self.arguments[0]] = src
-				result = fmt.Sprintf("ok added %x as '%s'", src.Addr, src.Nick)
+				result = fmt.Sprintf("ok added %x as '%s'", src.Addr, src.LocalNick)
 				self.action |= cmdDone
 			}
 		case cmdMsg:
 			var src *TalkSource
 			self.arguments = append(self.arguments, cmd)
 			if src = self.Sources[cmd]; src == nil {
-				if src = self.getSourceByNick(cmd); src == nil {
+				if src = self.GetSourceByNick(cmd); src == nil {
 					addr, err := StringToAddress(cmd)
 					if err != nil {
 						self.ResetCmd()
@@ -315,9 +321,9 @@ func (self *TalkClient) getSourceKey(src *TalkSource) string {
 	return ""
 }
 
-func (self *TalkClient) getSourceByNick(nick string) *TalkSource {
+func (self *TalkClient) GetSourceByNick(nick string) *TalkSource {
 	for _, src := range self.Sources {
-		if src.Nick == nick {
+		if src.LocalNick == nick {
 			return src
 		}
 	}

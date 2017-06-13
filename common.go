@@ -18,6 +18,10 @@ const (
 	connReconn
 )
 
+const (
+	msgChanBuf = 10
+)
+
 var (
 	pssServiceName                        = "pss"
 	bzzServiceName                        = "bzz"
@@ -29,12 +33,12 @@ var (
 	unknownColor	termbox.Attribute = termbox.ColorCyan
 	srcFormat = make(map[*talk.TalkSource]termbox.Attribute)
 	colorSrc = map[string]*talk.TalkSource{
-		"error": &talk.TalkSource{Nick:string([]byte{0x00, 0x01})},
-		"success": &talk.TalkSource{Nick:string([]byte{0x00, 0x02})},
-		"notify": &talk.TalkSource{Nick:string([]byte{0x00, 0x03})},
+		"error": &talk.TalkSource{LocalNick:string([]byte{0x00, 0x01})},
+		"success": &talk.TalkSource{LocalNick:string([]byte{0x00, 0x02})},
+		"notify": &talk.TalkSource{LocalNick:string([]byte{0x00, 0x03})},
 	}
 	unknownSrc = &talk.TalkSource{
-		Nick: "?!?",
+		LocalNick: "?!?",
 	}
 
 	prompt *Prompt = &Prompt{}
@@ -83,9 +87,13 @@ func (self *Prompt) Remove() {
 }
 
 // add a chat source (peer)
-func addSrc(label string, nick string, format termbox.Attribute) error {
+func addSrc(label string, nick string, remotenick string, format termbox.Attribute) error {
+	if remotenick == "" {
+		remotenick = nick
+	}
 	src := &talk.TalkSource{
-		Nick: nick,
+		LocalNick: nick,
+		RemoteNick: remotenick,
 	}
 	client.Sources[label] = src
 	srcFormat[src] = format
@@ -101,7 +109,8 @@ func addSrc(label string, nick string, format termbox.Attribute) error {
 // get a random source
 func randomSrc() *talk.TalkSource {
 	emptysrc := &talk.TalkSource{
-		Nick: "noone",
+		LocalNick: "lnoone",
+		RemoteNick: "rnoone",
 	}
 	if len(client.Sources) == 0 {
 		return emptysrc
