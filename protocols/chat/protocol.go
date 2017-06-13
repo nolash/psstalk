@@ -96,14 +96,18 @@ func (self *ChatCtrl) chatHandler(msg interface{}) error {
 	}
 
 	chatping, ok := msg.(*ChatPing)
-	if ok && !chatping.Pong {
-		log.Debug("sending pong", "peer", self.Peer.ID())
-		self.Peer.Send(&ChatPing{
-			Pong: true,
-		})
-		self.ConnC <- &ChatConn{
-			Addr: chatping.Addr,
-			E: EPing,
+	if ok {
+		if !chatping.Pong {
+			log.Debug("sending pong", "peer", self.Peer.ID())
+			self.Peer.Send(&ChatPing{
+				Pong: true,
+			})
+			self.ConnC <- &ChatConn{
+				Addr: chatping.Addr,
+				E: EPing,
+			}
+		} else {
+			log.Debug("got pong", "peer", self.Peer.ID())
 		}
 		return nil
 	}

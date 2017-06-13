@@ -13,9 +13,10 @@ const (
 )
 
 var (
-	cmdAll = uint32(1)
-	cmdAdd = uint32(1 << 1)
-	cmdDel = uint32(1 << 2)
+	cmdSelf = uint32(1)
+	cmdAll = uint32(1 << 1)
+	cmdAdd = uint32(1 << 2)
+	cmdDel = uint32(1 << 3)
 	cmdMsg = uint32(1 << 8)
 	cmdDone = uint32(0x80000000)
 	cmdDefault = cmdAll
@@ -168,6 +169,10 @@ func (self *TalkClient) Process(line []rune) (result string, payload string, err
 	return result, input, nil
 }
 
+func (self *TalkClient) IsSelfCmd() bool {
+	return self.action & cmdSelf > 0
+}
+
 func (self *TalkClient) IsSendCmd() bool {
 	return self.action & (cmdMsg | cmdAll) > 0
 }
@@ -267,6 +272,9 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 					self.action = cmdDel
 				case "rm":
 					self.action = cmdDel
+				case "self":
+					self.action = cmdSelf
+					self.action |= cmdDone
 				default:
 					return false, result, fmt.Errorf("unknown command")
 			}

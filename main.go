@@ -216,8 +216,10 @@ func main() {
 					line := prompt.Buffer
 					res, payload, err := client.Process(line)
 					color := colorSrc["error"]
-					if err == nil {
-						if client.IsAddCmd() {
+					if err == nil { if (client.IsSelfCmd()) {
+							color = colorSrc["success"]
+							client.Buffers[0].Add(color, []rune(fmt.Sprintf("%x", psc.BaseAddr)))
+						} else if client.IsAddCmd() {
 							args := client.GetCmd()
 							b, _ := hex.DecodeString(args[1])
 							potaddr := pot.Address{}
@@ -296,7 +298,11 @@ func connect(ctx context.Context, cancel func(), nick string, inC chan interface
 	cfg := pss.NewClientConfig()
 	cfg.RemoteHost = host
 	cfg.RemotePort = port
-	pssbackend := pss.NewClient(ctx, cancel, cfg)
+	pssbackend, err := pss.NewClient(ctx, cancel, cfg)
+	if err != nil {
+		return nil, newError(ePss, err.Error())
+	}
+
 	err = pssbackend.Start()
 	if err != nil {
 		return nil, newError(ePss, err.Error())
