@@ -12,7 +12,7 @@ const (
 	bufferLines = 1024
 )
 
-var (
+const (
 	cmdSelf = uint32(1)
 	cmdAll = uint32(1 << 1)
 	cmdAdd = uint32(1 << 2)
@@ -22,7 +22,16 @@ var (
 	cmdDefault = cmdAll
 )
 
+const (
+	entryPrivate = uint8(1)
+)
+
 type TalkAddress []byte
+
+type TalkFormat struct {
+	Source *TalkSource
+	Private bool
+}
 
 type TalkSource struct {
 	RemoteNick string
@@ -31,10 +40,15 @@ type TalkSource struct {
 	Seen time.Time
 }
 
+func (self *TalkSource) Saw() {
+	self.Seen = time.Now()
+}
+
 type TalkEntry struct {
 	Source *TalkSource
 	Content []rune
 	Id int // enables matching of line to message serial (or other desired id) after merge in viewport buffer
+	flags uint8
 }
 
 func (self *TalkEntry) Runes(sep string) (rb []rune) {
@@ -42,6 +56,9 @@ func (self *TalkEntry) Runes(sep string) (rb []rune) {
 	if self.Source != nil {
 		source := self.Source.LocalNick
 		if source[0] != 0x00 {
+			if self.flags & entryPrivate > 0 {
+				source = fmt.Sprintf(">%s<", source)
+			}
 			if sep == "" {
 				sep = ": "
 			}
@@ -69,11 +86,17 @@ type TalkBuffer struct {
 	Dirty bool
 }
 
-func (self *TalkBuffer) Add(src *TalkSource, line []rune) {
-	self.Buffer = append(self.Buffer, TalkEntry{
-		Source: src,
+func (self *TalkBuffer) Add(format *TalkFormat, line []rune) {
+	entry := TalkEntry{
 		Content: line,
-	})
+	}
+	if format != nil {
+		entry.Source = format.Source
+	}
+	if format.Private {
+		entry.flags |= entryPrivate
+	}
+	self.Buffer = append(self.Buffer, entry)
 	self.Dirty = true
 }
 

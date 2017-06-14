@@ -28,6 +28,7 @@ type ChatMsg struct {
 	Serial uint64
 	Content string
 	Source string
+	Private bool
 }
 
 type ChatPing struct {
@@ -123,7 +124,7 @@ func (self *ChatCtrl) chatHandler(msg interface{}) error {
 
 	chaths, ok := msg.(*ChatHandshake)
 	if ok {
-		log.Debug("processing handshake", "from", chaths.Nick)
+		log.Debug("processing handshake", "from", chaths.Nick, "addr", chaths.Addr)
 		self.PeerOAddr = chaths.Addr
 		self.ConnC <- &ChatConn{
 			Addr: chaths.Addr,
@@ -137,33 +138,27 @@ func (self *ChatCtrl) chatHandler(msg interface{}) error {
 	return fmt.Errorf("invalid psschat protocol message")
 }
 
-func New(oaddr []byte, nick string, inC chan interface{}, connC chan *ChatConn, injectfunc func(*ChatCtrl)) *p2p.Protocol {
-	chatctrl := &ChatCtrl{
-		InC: inC,
-		ConnC: connC,
-		OAddr: oaddr,
-		injectfunc: injectfunc,
-	}
-
-	if nick == "" {
-		nick = fmt.Sprintf("%x", oaddr[:4])
-	}
-
-	chatctrl.nick = nick
+func New(oaddr []byte, nick *string, inC chan interface{}, connC chan *ChatConn, injectfunc func(*ChatCtrl)) *p2p.Protocol {
 
 	return &p2p.Protocol{
+
 		Name:    ChatProtocol.Name,
 		Version: ChatProtocol.Version,
 		Length:  3,
 		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+			chatctrl := &ChatCtrl {
+				InC: inC,
+				ConnC: connC,
+				OAddr: oaddr,
+				injectfunc: injectfunc,
+			}
 			pp := protocols.NewPeer(p, rw, ChatProtocol)
 			chatctrl.Peer = pp
-			//injectfunc(chatctrl)
 			go func() {
 				time.Sleep(time.Microsecond * 100)
 				err := pp.Send(&ChatHandshake{
 					Addr: chatctrl.OAddr,
-					Nick: chatctrl.nick,
+					Nick: *nick,
 				})
 				if err != nil {
 					log.Error("Failed sending handshake, so other side will have to add manually")

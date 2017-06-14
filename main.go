@@ -29,7 +29,6 @@ var (
 
 var (
 	debugcount int
-	myNick string = "self"
 	run bool = true
 	freeze bool = false
 	chatlog log.Logger
@@ -100,7 +99,7 @@ func main() {
 		for run {
 			select {
 				case incoming := <-tmpC:
-					chatsrc := unknownSrc
+					format := &talk.TalkFormat{}
 					var rs []rune
 					chatmsg, ok := incoming.msg.(*chat.ChatMsg)
 					if ok {
@@ -108,22 +107,29 @@ func main() {
 						if err == nil {
 							lookupsrc := client.GetSourceByAddress(addr)
 							if lookupsrc != nil {
-								chatsrc = lookupsrc
+								format = &talk.TalkFormat{
+									Source: lookupsrc,
+								}
+								lookupsrc.Saw()
 							} else {
 								chatlog.Warn("failed lookup src", "addr", addr, "original addr", incoming.addr)
 							}
 						}
 						rs = bytes.Runes([]byte(chatmsg.Content))
+						if chatmsg.Private {
+							format.Private = true
+						}
 					} else {
+						// need to set src saw here
 						chatack, ok := incoming.msg.(*chat.ChatAck)
 						if ok && pssdebug {
 							rs = []rune(fmt.Sprintf("got ack for msg %d", chatack.Serial))
-							chatsrc = colorSrc["notify"]
+							format.Source = colorSrc["notify"]
 						} else {
 							break
 						}
 					}
-					client.Buffers[1].Add(chatsrc, rs)
+					client.Buffers[1].Add(format, rs)
 					otherC <- rs
 				case cerr := <-connC:
 					var rs []rune
@@ -145,14 +151,20 @@ func main() {
 							_, _, err := client.Process([]rune(fmt.Sprintf("/add %s %x", cerr.Detail, cerr.Addr)))
 							if err != nil {
 								chatlog.Error("internal error in adding peer to talk client", "err", err)
+							} else {
+								rs = []rune(fmt.Sprintf("new contact %s connected. Yay :)", cerr.Detail))
+								src = client.GetSourceByAddress(talk.TalkAddress(cerr.Addr))
+								src.Saw()
 							}
-							rs = []rune(fmt.Sprintf("new contact %s connected. Yay :)", cerr.Detail))
 						} else if src.Seen.IsZero() {
 							src.RemoteNick = cerr.Detail
 							rs = []rune(fmt.Sprintf("%s connected", src.LocalNick))
+							src.Saw()
 						} else {
 							src.RemoteNick = cerr.Detail
 							rs = []rune(fmt.Sprintf("%s reconnected!", src.LocalNick))
+							src.Saw()
+
 						}
 
 						colorsrc = colorSrc["success"]
@@ -160,7 +172,9 @@ func main() {
 					} else {
 						rs = []rune(fmt.Sprintf("%s: %s", cerr.Error(), cerr.Detail))
 					}
-					client.Buffers[1].Add(colorsrc, rs)
+
+					format := &talk.TalkFormat{Source: colorsrc}
+					client.Buffers[1].Add(format, rs)
 					otherC <- rs
 			}
 		}
@@ -210,6 +224,8 @@ func main() {
 					promptC <- true
 				// enter sends the message
 				case termbox.KeyEnter:
+					//var format *talk.TalkFormat
+					format := &talk.TalkFormat{}
 					if len(prompt.Buffer) == 0 {
 						break
 					}
@@ -218,8 +234,11 @@ func main() {
 					color := colorSrc["error"]
 					if err == nil {
 						if (client.IsSelfCmd()) {
-							color = colorSrc["success"]
-							client.Buffers[0].Add(color, []rune(fmt.Sprintf("%x", psc.BaseAddr)))
+							// res is not set in this case
+							format = &talk.TalkFormat{
+								Source: colorSrc["success"],
+							}
+							client.Buffers[0].Add(format, []rune(fmt.Sprintf("%x", psc.BaseAddr)))
 						} else if client.IsAddCmd() {
 							args := client.GetCmd()
 							b, _ := hex.DecodeString(args[1])
@@ -233,37 +252,50 @@ func main() {
 						} else {
 							if payload != "" {
 								// dispatch message
-								serial++
-								payload := chat.ChatMsg{
+								chatmsg := chat.ChatMsg{
 									Serial:  uint64(serial),
 									Content: payload,
-									Source:  randomSrc().LocalNick,
+									Source: pssnick,
 								}
-
-
 								if client.IsMsgCmd() {
-									src := client.GetSourceByNick(client.GetCmd()[0])
+									src := client.GetSourceByAddress(talk.TalkAddress(client.GetCmd()[0]))
 									if src != nil {
+										if src.Seen.IsZero() {
+											chatlog.Warn("send to unseen contact", "nick", src.LocalNick)
+										} else {
+											serial++
+											chatmsg.Private = true
+											format = &talk.TalkFormat{
+												Source: &talk.TalkSource{
+													LocalNick: fmt.Sprintf(">%s<", src.LocalNick),
+												},
+											}
 
-										chatlog.Trace("send to priv", "src", src.LocalNick)
-										var potaddr pot.Address
-										copy(potaddr[:], src.Addr[:])
-										outC[potaddr] <- payload
+											chatlog.Debug("send to priv", "src", src.LocalNick)
+											var potaddr pot.Address
+											copy(potaddr[:], src.Addr[:])
+											outC[potaddr] <- chatmsg
+										}
 									}
 								} else {
-									chatlog.Trace("send to all")
 									for _, src := range client.Sources {
-										var potaddr pot.Address
-										copy(potaddr[:], src.Addr[:])
+										if src.Seen.IsZero() {
+											chatlog.Warn("send to unseen contact", "nick", src.LocalNick)
+										} else {
+											serial++
+											var potaddr pot.Address
+											copy(potaddr[:], src.Addr[:])
 
-										chatlog.Trace("in src", "nick", src.LocalNick, "potaddr", potaddr, "chan", outC[potaddr])
-										outC[potaddr] <- payload
+											chatlog.Debug("all-sending to ", "addr", potaddr, "nick", src.LocalNick)
+											outC[potaddr] <- chatmsg
+										}
 									}
 								}
 
-								// add the line to the history buffer for the local user
-								client.Buffers[0].Add(nil, line)
-								color = colorSrc["success"]
+								// add the line to the history buffer for the local userl
+								chatlog.Debug("sending.....", "buf", client.Buffers[0], "format", format, "line", line)
+								client.Buffers[0].Add(format, []rune(payload))
+								color = colorSrc["success"] // probably not needed
 
 							}
 
@@ -272,7 +304,8 @@ func main() {
 					}
 					if len(res) > 0 {
 						resrunes := bytes.Runes([]byte(res))
-						client.Buffers[0].Add(color, resrunes)
+						format = &talk.TalkFormat{Source: color}
+						client.Buffers[0].Add(format, resrunes)
 						otherC <- resrunes
 					}
 					// move the prompt line down
@@ -328,7 +361,7 @@ func connect(ctx context.Context, cancel func(), nick string, inC chan interface
 		return nil, newError(ePss, err.Error())
 	}
 	oaddr := pssbackend.BaseAddr
-	err = pssbackend.RunProtocol(chat.New(oaddr, nick, inC, connC, newChatInject(tmpC, outC)))
+	err = pssbackend.RunProtocol(chat.New(oaddr, &nick, inC, connC, newChatInject(tmpC, outC)))
 	if err != nil {
 		return nil, newError(ePss, err.Error())
 	}
@@ -346,6 +379,7 @@ func newChatInject(tmpC chan *incomingMsg, outC map[pot.Address]chan interface{}
 				select {
 				case msg := <-outC[potaddr]:
 					err := ctrl.Peer.Send(msg)
+					chatlog.Debug(fmt.Sprintf("peersend return from peer %p", ctrl.Peer), "err", err, "chan", outC[potaddr])
 					if err != nil {
 						id := ctrl.Peer.ID()
 						ctrl.ConnC <- &chat.ChatConn{
@@ -367,7 +401,7 @@ func newChatInject(tmpC chan *incomingMsg, outC map[pot.Address]chan interface{}
 							ctrl.Peer.Send(&chat.ChatPing{})
 						}
 					case msg := <-ctrl.InC:
-						chatlog.Debug("incoming msg", "peer", ctrl.Peer, "msg", msg)
+						chatlog.Debug(fmt.Sprintf("incoming msg from peer %p", ctrl.Peer), "oaddr", ctrl.PeerOAddr, "msg", msg)
 						tmpC <- &incomingMsg{
 							msg: msg,
 							addr: ctrl.PeerOAddr,
