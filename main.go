@@ -224,7 +224,7 @@ func main() {
 					promptC <- true
 				// enter sends the message
 				case termbox.KeyEnter:
-					//var format *talk.TalkFormat
+					var inserts int
 					format := &talk.TalkFormat{}
 					if len(prompt.Buffer) == 0 {
 						break
@@ -238,7 +238,19 @@ func main() {
 							format = &talk.TalkFormat{
 								Source: colorSrc["success"],
 							}
-							client.Buffers[0].Add(format, []rune(fmt.Sprintf("%x", psc.BaseAddr)))
+							line := fmt.Sprintf("%x", psc.BaseAddr)
+							client.Buffers[0].Add(format, []rune(line))
+							inserts += (len(line) / client.Width) + 1
+						} else if client.IsListCmd() {
+							format = &talk.TalkFormat{
+								Source: colorSrc["notify"],
+							}
+							for nick, src := range client.Sources {
+								line := fmt.Sprintf("%s [%x] (%s)", nick, src.Addr[:4], src.Seen)
+								client.Buffers[0].Add(format, []rune(line))
+
+								inserts += (len(line) / client.Width) + 1
+							}
 						} else if client.IsAddCmd() {
 							args := client.GetCmd()
 							b, _ := hex.DecodeString(args[1])
@@ -270,8 +282,6 @@ func main() {
 													LocalNick: fmt.Sprintf(">%s<", src.LocalNick),
 												},
 											}
-
-											chatlog.Debug("send to priv", "src", src.LocalNick)
 											var potaddr pot.Address
 											copy(potaddr[:], src.Addr[:])
 											outC[potaddr] <- chatmsg
@@ -286,15 +296,14 @@ func main() {
 											var potaddr pot.Address
 											copy(potaddr[:], src.Addr[:])
 
-											chatlog.Debug("all-sending to ", "addr", potaddr, "nick", src.LocalNick)
 											outC[potaddr] <- chatmsg
 										}
 									}
 								}
 
 								// add the line to the history buffer for the local userl
-								chatlog.Debug("sending.....", "buf", client.Buffers[0], "format", format, "line", line)
 								client.Buffers[0].Add(format, []rune(payload))
+								inserts += (len(payload) / client.Width) + 1
 								color = colorSrc["success"] // probably not needed
 
 							}
@@ -306,11 +315,12 @@ func main() {
 						resrunes := bytes.Runes([]byte(res))
 						format = &talk.TalkFormat{Source: color}
 						client.Buffers[0].Add(format, resrunes)
+						inserts += (len(res) / client.Width) + 1
 						otherC <- resrunes
 					}
 					// move the prompt line down
 					// and back up if we hit the bottom of the viewport height
-					prompt.Line += (prompt.Count / client.Width) + 1
+					prompt.Line += inserts + (prompt.Count / client.Width)
 					if prompt.Line > client.Lines[0]-1 {
 						prompt.Line = client.Lines[0] - 1
 					}

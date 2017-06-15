@@ -24,6 +24,7 @@
 //    /self - shows your own swarm overlay address
 //    /add <handle> <overlayaddress> - adds a "connection" to pss peer from now on called <handle>
 //    /del <handle> - remove "connection" to a pss peer called <handle>
+//    /list - show list of "connected" peers
 //    /msg <handle> <content> - direct-message <content> to pss peer called <handle>
 //
 // To QUIT the application, press ESC

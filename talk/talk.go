@@ -14,11 +14,15 @@ const (
 
 const (
 	cmdSelf = uint32(1)
-	cmdAll = uint32(1 << 1)
-	cmdAdd = uint32(1 << 2)
-	cmdDel = uint32(1 << 3)
-	cmdMsg = uint32(1 << 8)
-	cmdDone = uint32(0x80000000)
+	cmdList = uint32(1 << 1)
+
+	cmdAdd = uint32(1 << 8)
+	cmdDel = uint32(1 << 9)
+
+	cmdAll = uint32(1 << 16)
+	cmdMsg = uint32(1 << 17)
+
+	cmdDone = uint32(0x80000000) // << 31
 	cmdDefault = cmdAll
 )
 
@@ -209,6 +213,10 @@ func (self *TalkClient) IsAddCmd() bool {
 	return self.action & cmdAdd > 0
 }
 
+func (self *TalkClient) IsListCmd() bool {
+	return self.action & cmdList > 0
+}
+
 func (self *TalkClient) GetCmd() []string {
 	if !self.readyCmd() {
 		return nil
@@ -302,8 +310,9 @@ func (self *TalkClient) addCmd(cmd string) (bool, string, error) {
 				case "rm":
 					self.action = cmdDel
 				case "self":
-					self.action = cmdSelf
-					self.action |= cmdDone
+					self.action = cmdSelf | cmdDone
+				case "list":
+					self.action = cmdList | cmdDone
 				default:
 					return false, result, fmt.Errorf("unknown command")
 			}

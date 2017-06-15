@@ -40,6 +40,10 @@ All commands are preceded by "/". Available commands are:
 
    shows the swarm overlay address of the node (your address)
 
+    /list
+
+   shows a list of current handles and peers
+
     /add <handle> <swarm overlay address>
 
    adds a new peer. you need at least one to send messages
