@@ -35,6 +35,10 @@ When successfully started, psstalk shows a terminal screen split in two viewport
 ### COMMANDS
 
 All commands are preceded by "/". Available commands are:
+    
+    /self
+
+   shows the swarm overlay address of the node (your address)
 
     /add <handle> <swarm overlay address>
 
